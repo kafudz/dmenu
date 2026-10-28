@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <locale.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -615,12 +616,14 @@ readstdin(void)
 			struct item *tmp;
 
 			itemsiz += 256;
+			if (itemsiz > SIZE_MAX / sizeof(*items))
+					die("too many items");
 			tmp = realloc(items, itemsiz * sizeof(*items));
 			if (!tmp)
 				die("cannot realloc %zu bytes:", itemsiz * sizeof(*items));
 			items = tmp;
 		}
-		if (line[len - 1] == '\n')
+		if (len > 0 && line[len - 1] == '\n')
 			line[len - 1] = '\0';
 		if (!(items[i].text = strdup(line)))
 			die("strdup:");
