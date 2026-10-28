@@ -1,0 +1,23 @@
+#!/bin/sh
+
+cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
+cache="$cachedir/dmenu_run_desktop"
+
+[ ! -e "$cachedir" ] && mkdir -p "$cachedir"
+
+datahome="${XDG_DATA_HOME:-"$HOME/.local/share"}"
+datadirs="${XDG_DATA_DIRS:-"/usr/local/share:/usr/share"}"
+
+# Build a colon-separated list: user dir first, then system dirs
+dirs=""
+IFS=:
+for dir in $datahome $datadirs; do
+	dirs="${dirs}${dirs:+:}${dir}/applications"
+done
+
+# Rebuild the cache if any application dir is newer than it
+if stest -dqr -n "$cache" $dirs 2>/dev/null; then
+	stest -fl $dirs | grep -v 'mimeinfo.cache' | sed 's/\.[^./]*$//' | sort -u | tee "$cache"
+else
+	cat "$cache"
+fi
