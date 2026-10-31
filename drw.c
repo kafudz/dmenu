@@ -251,7 +251,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	long utf8codepoint = 0;
 	const char *utf8str;
 	FcCharSet *fccharset;
-	FcPattern *fcpattern, *match;
+	FcPattern *fcpattern, *match = NULL;
 	XftResult result;
 	int charexists = 0, overflow = 0;
 	static unsigned int nomatches[128], ellipsis_width, invalid_width;
@@ -376,12 +376,16 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 						; /* NOP */
 					curfont->next = usedfont;
 				} else {
-					xfont_free(usedfont);
+					/* On success the Xft font owns match and frees it in
+					 * xfont_free(); only destroy it ourselves if opening failed. */
+					if (usedfont)
+						xfont_free(usedfont);
+					else
+						FcPatternDestroy(match);
 					nomatches[nomatches[h0] ? h1 : h0] = utf8codepoint;
 no_match:
 					usedfont = drw->fonts;
 				}
-				FcPatternDestroy(match); /* FIXED: Prevent Fontconfig memory leak */
 			}
 		}
 	}
