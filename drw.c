@@ -10,7 +10,7 @@
 #define UTF_INVALID 0xFFFD
 
 static int
-utf8decode(const char *s_in, long *u, int *err) /* FIXED: int -> int *err */
+utf8decode(const char *s_in, long *u, int *err)
 {
 	static const unsigned char lens[] = {
 		/*  0XXXX */ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -79,6 +79,9 @@ drw_resize(Drw *drw, unsigned int w, unsigned int h)
 void
 drw_free(Drw *drw)
 {
+	if (!drw)
+		return;
+
 	XFreePixmap(drw->dpy, drw->drawable);
 	XFreeGC(drw->dpy, drw->gc);
 	drw_fontset_free(drw->fonts);
@@ -94,7 +97,12 @@ xfont_create(Drw *drw, const char *fontname, FcPattern *fontpattern)
 	Fnt *font;
 	XftFont *xfont = NULL;
 	FcPattern *pattern = NULL;
+	FcBool iscolor;
 
+	/*
+	 * Color fonts (e.g. color emoji) make Xft fail with a BadLength X error
+	 * that kills the program, so they are never used.
+	 */
 	if (fontname) {
 		if (!(xfont = XftFontOpenName(drw->dpy, drw->screen, fontname))) {
 			fprintf(stderr, "error, cannot load font from name: '%s'\n", fontname);
@@ -105,7 +113,17 @@ xfont_create(Drw *drw, const char *fontname, FcPattern *fontpattern)
 			XftFontClose(drw->dpy, xfont);
 			return NULL;
 		}
+		if (FcPatternGetBool(xfont->pattern, FC_COLOR, 0, &iscolor) == FcResultMatch && iscolor) {
+			fprintf(stderr, "error, color fonts are not supported: '%s'\n", fontname);
+			FcPatternDestroy(pattern);
+			XftFontClose(drw->dpy, xfont);
+			return NULL;
+		}
 	} else if (fontpattern) {
+		/* Checked before opening: once open, Xft owns the pattern, whereas
+		 * on NULL the caller still owns it and destroys it. */
+		if (FcPatternGetBool(fontpattern, FC_COLOR, 0, &iscolor) == FcResultMatch && iscolor)
+			return NULL;
 		if (!(xfont = XftFontOpenPattern(drw->dpy, fontpattern))) {
 			fprintf(stderr, "error, cannot load font from pattern.\n");
 			return NULL;
@@ -241,21 +259,22 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 }
 
 int
-drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert) /* FIXED: const char -> const char *text */
+drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert)
 {
 	int ty, ellipsis_x = 0;
 	unsigned int tmpw, ew, ellipsis_w = 0, ellipsis_len, hash, h0, h1;
 	XftDraw *d = NULL;
-	Fnt *usedfont, *curfont, *nextfont;
+	Fnt *usedfont, *curfont, *nextfont, *fallback;
 	int utf8strlen, utf8charlen, utf8err, render = x || y || w || h;
 	long utf8codepoint = 0;
 	const char *utf8str;
 	FcCharSet *fccharset;
-	FcPattern *fcpattern, *match = NULL;
+	FcPattern *fcpattern, *match;
 	XftResult result;
 	int charexists = 0, overflow = 0;
+	/* keep track of a few codepoints for which no fallback font exists */
 	static unsigned int nomatches[128], ellipsis_width, invalid_width;
-	static const char invalid[] = "";
+	static const char invalid[] = "\xEF\xBF\xBD"; /* U+FFFD replacement character */
 
 	if (!drw || (render && (!drw->scheme || !w)) || !text || !drw->fonts)
 		return 0;
@@ -319,7 +338,9 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 
 		if (utf8strlen) {
 			if (render) {
-				ty = y + (h - usedfont->h) / 2 + usedfont->xfont->ascent;
+				/* signed: a fallback font may be taller than the bar, and
+				 * unsigned arithmetic would push the text off screen */
+				ty = y + ((int)h - (int)usedfont->h) / 2 + usedfont->xfont->ascent;
 				XftDrawStringUtf8(d, &drw->scheme[invert ? ColBg : ColFg],
 				                  usedfont->xfont, x, ty, (XftChar8 *)utf8str, utf8strlen);
 			}
@@ -341,22 +362,26 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 			charexists = 0;
 			usedfont = nextfont;
 		} else {
+			/* Regardless of whether or not a fallback font is found, the
+			 * character must be drawn: with the first font if need be. */
 			charexists = 1;
+			usedfont = drw->fonts;
+
 			hash = (unsigned int)utf8codepoint;
 			hash = ((hash >> 16) ^ hash) * 0x21F0AAAD;
 			hash = ((hash >> 15) ^ hash) * 0xD35A2D97;
 			h0 = ((hash >> 15) ^ hash) % LENGTH(nomatches);
 			h1 = (hash >> 17) % LENGTH(nomatches);
 
+			/* skip the expensive XftFontMatch() when no match is known to exist */
 			if (nomatches[h0] == utf8codepoint || nomatches[h1] == utf8codepoint)
-				goto no_match;
+				continue;
+
+			if (!drw->fonts->pattern)
+				die("the first font in the cache must be loaded from a font string.");
 
 			fccharset = FcCharSetCreate();
 			FcCharSetAddChar(fccharset, utf8codepoint);
-
-			if (!drw->fonts->pattern) {
-				die("the first font in the cache must be loaded from a font string.");
-			}
 
 			fcpattern = FcPatternDuplicate(drw->fonts->pattern);
 			FcPatternAddCharSet(fcpattern, FC_CHARSET, fccharset);
@@ -369,23 +394,20 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 			FcCharSetDestroy(fccharset);
 			FcPatternDestroy(fcpattern);
 
-			if (match) {
-				usedfont = xfont_create(drw, NULL, match);
-				if (usedfont && XftCharExists(drw->dpy, usedfont->xfont, utf8codepoint)) {
-					for (curfont = drw->fonts; curfont->next; curfont = curfont->next)
-						; /* NOP */
-					curfont->next = usedfont;
-				} else {
-					/* On success the Xft font owns match and frees it in
-					 * xfont_free(); only destroy it ourselves if opening failed. */
-					if (usedfont)
-						xfont_free(usedfont);
-					else
-						FcPatternDestroy(match);
-					nomatches[nomatches[h0] ? h1 : h0] = utf8codepoint;
-no_match:
-					usedfont = drw->fonts;
-				}
+			fallback = match ? xfont_create(drw, NULL, match) : NULL;
+			if (fallback && XftCharExists(drw->dpy, fallback->xfont, utf8codepoint)) {
+				for (curfont = drw->fonts; curfont->next; curfont = curfont->next)
+					; /* NOP */
+				curfont->next = fallback;
+				usedfont = fallback;
+			} else {
+				/* On success the Xft font owns match and frees it in
+				 * xfont_free(); only destroy it ourselves if it was never opened. */
+				if (fallback)
+					xfont_free(fallback);
+				else if (match)
+					FcPatternDestroy(match);
+				nomatches[nomatches[h0] ? h1 : h0] = utf8codepoint;
 			}
 		}
 	}
