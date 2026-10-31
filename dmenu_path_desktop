@@ -1,34 +1,75 @@
 #!/bin/sh
+# Print the desktop entry IDs (file names without ".desktop") found in the
+# XDG applications directories, one per line (used by dmenu_run_desktop).
+#
+# The list is cached. The cache is rebuilt when the set of directories
+# changes, when one of them is modified, or when the cache is missing or
+# empty. It is replaced atomically, so a concurrent or interrupted run can
+# never leave a truncated cache behind. Only POSIX shell builtins are used
+# on the cached path, so nothing is forked except the final cat.
 
-cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
+set -f # directory names are plain strings, never glob patterns
+
+cachedir="${XDG_CACHE_HOME:-$HOME/.cache}"
 cache="$cachedir/dmenu_run_desktop"
+sigfile="$cache.dirs"
 
-mkdir -p "$cachedir"
-
-datahome="${XDG_DATA_HOME:-"$HOME/.local/share"}"
-datadirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-
-# Colon-separated list of application dirs that actually exist
-dirs=""
+# Existing absolute applications directories: the user's first, then the
+# system ones. Empty and relative entries are skipped.
+dirs=
 IFS=:
-for dir in $datahome $datadirs; do
-	[ -d "$dir/applications" ] && dirs="${dirs}${dirs:+:}${dir}/applications"
+for base in "${XDG_DATA_HOME:-$HOME/.local/share}" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+	case $base in
+	/*) [ -d "$base/applications" ] && dirs="$dirs${dirs:+:}$base/applications" ;;
+	esac
 done
 
-# Without directories stest would read stdin and hang
-[ -n "$dirs" ] || exit 1
+if [ -z "$dirs" ]; then
+	echo "dmenu_path_desktop: no applications directory found" >&2
+	exit 1
+fi
 
-# Rebuild if the cache is missing, empty, or older than any application dir
-if [ ! -s "$cache" ] || stest -dqr -n "$cache" $dirs 2>/dev/null; then
+# Succeeds (returns 0) when the cache has to be rebuilt.
+stale() {
+	[ -s "$cache" ] || return 0
+	{ IFS= read -r saved < "$sigfile"; } 2>/dev/null || return 0
+	[ "$saved" = "$dirs" ] || return 0
+	for dir in $dirs; do
+		[ "$dir" -nt "$cache" ] && return 0
+	done
+	return 1
+}
+
+# Only regular *.desktop files count: this skips mimeinfo.cache, defaults.list,
+# directories and dangling symlinks. The name is cut with shell expansion
+# instead of sed, and sort -u drops entries a user directory overrides.
+build() {
+	for dir in $dirs; do
+		set +f # globbing is needed for the pattern below
+		for file in "$dir"/*.desktop; do
+			[ -f "$file" ] || continue
+			file=${file##*/}
+			printf '%s\n' "${file%.desktop}"
+		done
+		set -f
+	done | sort -u
+}
+
+if stale; then
 	tmp="$cache.$$"
-	stest -fl $dirs 2>/dev/null | grep -v 'mimeinfo.cache' \
-		| sed 's/\.[^./]*$//' | sort -u > "$tmp"
-	# Never keep an empty result as the cache
-	if [ -s "$tmp" ]; then
-		mv "$tmp" "$cache"
+	trap 'rm -f "$tmp"' EXIT
+	trap 'exit 1' HUP INT TERM
+
+	mkdir -p "$cachedir" 2>/dev/null
+	if { build > "$tmp"; } 2>/dev/null && [ -s "$tmp" ] && mv -f "$tmp" "$cache"; then
+		# written last: if we are killed before this, the next run rebuilds
+		{ printf '%s\n' "$dirs" > "$sigfile"; } 2>/dev/null
 	else
+		# cache directory not writable (or nothing found): still print the list
 		rm -f "$tmp"
+		build
+		exit
 	fi
 fi
 
-[ -s "$cache" ] && cat "$cache"
+exec cat "$cache"

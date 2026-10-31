@@ -1,13 +1,68 @@
 #!/bin/sh
+# Print the executables found in $PATH, one per line (used by dmenu_run).
+#
+# The list is cached. The cache is rebuilt when $PATH changes, when one of
+# its directories is modified, or when the cache is missing or empty. It is
+# replaced atomically, so a concurrent or interrupted run can never leave a
+# truncated cache behind.
 
-cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
+set -f # directory names are plain strings, never glob patterns
+
+cachedir="${XDG_CACHE_HOME:-$HOME/.cache}"
 cache="$cachedir/dmenu_run"
+sigfile="$cache.path"
 
-[ ! -e "$cachedir" ] && mkdir -p "$cachedir"
-
+# Absolute, existing directories from $PATH. Empty and relative entries are
+# skipped so the result never depends on the current directory.
+dirs=
 IFS=:
-if stest -dqr -n "$cache" $PATH; then
-	stest -flx $PATH | sort -u | tee "$cache"
-else
-	cat "$cache"
+for dir in $PATH; do
+	case $dir in
+	/*) [ -d "$dir" ] && dirs="$dirs${dirs:+:}$dir" ;;
+	esac
+done
+
+if [ -z "$dirs" ]; then
+	echo "dmenu_path: no usable directory in PATH" >&2
+	exit 1
 fi
+
+# Succeeds (returns 0) when the cache has to be rebuilt.
+stale() {
+	[ -s "$cache" ] || return 0
+	{ IFS= read -r saved < "$sigfile"; } 2>/dev/null || return 0
+	[ "$saved" = "$dirs" ] || return 0
+	for dir in $dirs; do
+		[ "$dir" -nt "$cache" ] && return 0
+	done
+	return 1
+}
+
+build() {
+	# stest's own diagnostics are noise here (it can report a stale errno)
+	stest -flx $dirs 2>/dev/null | sort -u
+}
+
+if stale; then
+	if ! command -v stest >/dev/null 2>&1; then
+		echo "dmenu_path: stest not found in PATH" >&2
+		exit 1
+	fi
+
+	tmp="$cache.$$"
+	trap 'rm -f "$tmp"' EXIT
+	trap 'exit 1' HUP INT TERM
+
+	mkdir -p "$cachedir" 2>/dev/null
+	if { build > "$tmp"; } 2>/dev/null && [ -s "$tmp" ] && mv -f "$tmp" "$cache"; then
+		# written last: if we are killed before this, the next run rebuilds
+		{ printf '%s\n' "$dirs" > "$sigfile"; } 2>/dev/null
+	else
+		# cache directory not writable (or nothing found): still print the list
+		rm -f "$tmp"
+		build
+		exit
+	fi
+fi
+
+exec cat "$cache"
