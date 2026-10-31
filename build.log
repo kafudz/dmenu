@@ -1,6 +1,0 @@
-cc -c -std=c99 -pedantic -Wall -Wextra -Os  -I/usr/include/freetype2 -I/usr/include/libpng16 -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700 -D_POSIX_C_SOURCE=200809L -DVERSION=\"5.4\" -DXINERAMA dmenu.c
-cc -c -std=c99 -pedantic -Wall -Wextra -Os  -I/usr/include/freetype2 -I/usr/include/libpng16 -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700 -D_POSIX_C_SOURCE=200809L -DVERSION=\"5.4\" -DXINERAMA drw.c
-cc -c -std=c99 -pedantic -Wall -Wextra -Os  -I/usr/include/freetype2 -I/usr/include/libpng16 -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700 -D_POSIX_C_SOURCE=200809L -DVERSION=\"5.4\" -DXINERAMA util.c
-cc -o dmenu dmenu.o drw.o util.o -lX11 -lXinerama -lXft -lfontconfig
-cc -c -std=c99 -pedantic -Wall -Wextra -Os  -I/usr/include/freetype2 -I/usr/include/libpng16 -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700 -D_POSIX_C_SOURCE=200809L -DVERSION=\"5.4\" -DXINERAMA stest.c
-cc -o stest stest.o -lX11 -lXinerama -lXft -lfontconfig
