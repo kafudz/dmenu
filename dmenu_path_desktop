@@ -3,21 +3,32 @@
 cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
 cache="$cachedir/dmenu_run_desktop"
 
-[ ! -e "$cachedir" ] && mkdir -p "$cachedir"
+mkdir -p "$cachedir"
 
 datahome="${XDG_DATA_HOME:-"$HOME/.local/share"}"
-datadirs="${XDG_DATA_DIRS:-"/usr/local/share:/usr/share"}"
+datadirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
-# Build a colon-separated list: user dir first, then system dirs
+# Colon-separated list of application dirs that actually exist
 dirs=""
 IFS=:
 for dir in $datahome $datadirs; do
-	dirs="${dirs}${dirs:+:}${dir}/applications"
+	[ -d "$dir/applications" ] && dirs="${dirs}${dirs:+:}${dir}/applications"
 done
 
-# Rebuild the cache if any application dir is newer than it
-if stest -dqr -n "$cache" $dirs 2>/dev/null; then
-	stest -fl $dirs | grep -v 'mimeinfo.cache' | sed 's/\.[^./]*$//' | sort -u | tee "$cache"
-else
-	cat "$cache"
+# Without directories stest would read stdin and hang
+[ -n "$dirs" ] || exit 1
+
+# Rebuild if the cache is missing, empty, or older than any application dir
+if [ ! -s "$cache" ] || stest -dqr -n "$cache" $dirs 2>/dev/null; then
+	tmp="$cache.$$"
+	stest -fl $dirs 2>/dev/null | grep -v 'mimeinfo.cache' \
+		| sed 's/\.[^./]*$//' | sort -u > "$tmp"
+	# Never keep an empty result as the cache
+	if [ -s "$tmp" ]; then
+		mv "$tmp" "$cache"
+	else
+		rm -f "$tmp"
+	fi
 fi
+
+[ -s "$cache" ] && cat "$cache"
