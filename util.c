@@ -10,9 +10,8 @@ void
 die(const char *fmt, ...)
 {
 	va_list ap;
-	int saved_errno;
+	int saved_errno = errno; /* save first: stdio calls below may change it */
 
-	saved_errno = errno;
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
@@ -26,9 +25,31 @@ die(const char *fmt, ...)
 void *
 ecalloc(size_t nmemb, size_t size)
 {
-	void *p;
+	void *p = calloc(nmemb, size);
 
-	if (!(p = calloc(nmemb, size)))
+	/* a NULL result is legitimate for a zero-sized request */
+	if (!p && nmemb && size)
 		die("calloc:");
+	return p;
+}
+
+void *
+erealloc(void *p, size_t size)
+{
+	void *q;
+
+	/* realloc(p, 0) may free p and return NULL, so ask for one byte */
+	if (!(q = realloc(p, size ? size : 1)))
+		die("realloc:");
+	return q;
+}
+
+char *
+estrdup(const char *s)
+{
+	char *p;
+
+	if (!(p = strdup(s)))
+		die("strdup:");
 	return p;
 }

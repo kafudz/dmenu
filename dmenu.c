@@ -281,8 +281,8 @@ match(void)
 	strcpy(buf, text);
 	/* separate input text into tokens to be matched individually */
 	for (s = strtok(buf, " "); s; tokv[tokc - 1] = s, s = strtok(NULL, " "))
-		if (++tokc > tokn && !(tokv = realloc(tokv, ++tokn * sizeof *tokv)))
-			die("cannot realloc %zu bytes:", tokn * sizeof *tokv);
+		if (++tokc > tokn)
+			tokv = erealloc(tokv, ++tokn * sizeof *tokv);
 	len = tokc ? strlen(tokv[0]) : 0;
 
 	matches = lprefix = lsubstr = matchend = prefixend = substrend = NULL;
@@ -649,19 +649,14 @@ readstdin(void)
 	/* read each line from stdin and add it to the item list */
 	for (i = 0; (len = getline(&line, &linesiz, stdin)) != -1; i++) {
 		if (i + 1 >= itemsiz) {
-			struct item *tmp;
 			itemsiz += 256;
 			if (itemsiz > SIZE_MAX / sizeof(*items))
 				die("too many items");
-			tmp = realloc(items, itemsiz * sizeof(*items));
-			if (!tmp)
-				die("cannot realloc %zu bytes:", itemsiz * sizeof(*items));
-			items = tmp;
+			items = erealloc(items, itemsiz * sizeof(*items));
 		}
 		if (len > 0 && line[len - 1] == '\n')
 			line[len - 1] = '\0';
-		if (!(items[i].text = strdup(line)))
-			die("strdup:");
+		items[i].text = estrdup(line);
 		items[i].out = 0;
 	}
 	free(line);
