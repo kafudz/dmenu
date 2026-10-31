@@ -10,7 +10,6 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
@@ -18,13 +17,12 @@
 #include <X11/extensions/Xinerama.h>
 #endif
 #include <X11/Xft/Xft.h>
-
 #include "drw.h"
 #include "util.h"
 
 /* macros */
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
-                             * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
+* MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
 #define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
 
 /* enums */
@@ -37,7 +35,7 @@ struct item {
 };
 
 static char text[BUFSIZ] = "";
-static char *embed;
+static char embed;
 static int bh, mw, mh;
 static int inputw = 0, promptw;
 static int lrpad; /* sum of left and right padding */
@@ -46,12 +44,11 @@ static struct item *items = NULL;
 static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
-
 static Atom clip, utf8;
 static Display *dpy;
 static Window root, parentwin, win;
 static XIC xic;
-
+static XIM xim; /* FIXED: Added global xim to properly close it in cleanup */
 static Drw *drw;
 static Clr *scheme[SchemeLast];
 
@@ -102,7 +99,6 @@ appenditem(struct item *item, struct item **list, struct item **last)
 		(*last)->right = item;
 	else
 		*list = item;
-
 	item->left = *last;
 	item->right = NULL;
 	*last = item;
@@ -117,6 +113,7 @@ calcoffsets(void)
 		n = lines * bh;
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
+
 	/* calculate which items will begin the next page and previous page */
 	for (i = 0, next = curr; next; next = next->right)
 		if ((i += (lines > 0) ? bh : (int)textw_clamp(next->text, (unsigned int)n)) > n)
@@ -137,6 +134,17 @@ cleanup(void)
 	for (i = 0; items && items[i].text; ++i)
 		free(items[i].text);
 	free(items);
+	
+	/* FIXED: Properly destroy X Input Context and Method to prevent X server resource leaks */
+	if (xic) {
+		XDestroyIC(xic);
+		xic = NULL;
+	}
+	if (xim) {
+		XCloseIM(xim);
+		xim = NULL;
+	}
+
 	drw_free(drw);
 	XSync(dpy, False);
 	XCloseDisplay(dpy);
@@ -187,6 +195,7 @@ drawmenu(void)
 		drw_setscheme(drw, scheme[SchemeSel]);
 		x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0);
 	}
+
 	/* draw input field */
 	w = (lines > 0 || !matches) ? mw - x : inputw;
 	drw_setscheme(drw, scheme[SchemeNorm]);
@@ -248,6 +257,7 @@ grabkeyboard(void)
 
 	if (embed)
 		return;
+
 	/* try to grab keyboard, we may have to wait for another process to ungrab */
 	for (i = 0; i < 1000; i++) {
 		if (XGrabKeyboard(dpy, DefaultRootWindow(dpy), True, GrabModeAsync,
@@ -263,7 +273,6 @@ match(void)
 {
 	static char **tokv = NULL;
 	static int tokn = 0;
-
 	char buf[sizeof text], *s;
 	int i, tokc = 0;
 	size_t len, textsize;
@@ -292,6 +301,7 @@ match(void)
 		else
 			appenditem(item, &lsubstr, &substrend);
 	}
+
 	if (lprefix) {
 		if (matches) {
 			matchend->right = lprefix;
@@ -409,7 +419,6 @@ keypress(XKeyEvent *ev)
 		case XK_M: ksym = XK_Return; ev->state &= ~ControlMask; break;
 		case XK_n: ksym = XK_Down;      break;
 		case XK_p: ksym = XK_Up;        break;
-
 		case XK_k: /* delete right */
 			text[cursor] = '\0';
 			match();
@@ -467,7 +476,7 @@ keypress(XKeyEvent *ev)
 	switch(ksym) {
 	default:
 insert:
-		if (len > 0 && !iscntrl((unsigned char)*buf))
+		if (len > 0 && !iscntrl((unsigned char) buf))
 			insert(buf, len);
 		break;
 	case XK_Delete:
@@ -507,7 +516,7 @@ insert:
 			cursor = 0;
 			break;
 		}
-		sel = curr = matches;
+		sel = curr = matches; 
 		calcoffsets();
 		break;
 	case XK_Left:
@@ -614,10 +623,9 @@ readstdin(void)
 	for (i = 0; (len = getline(&line, &linesiz, stdin)) != -1; i++) {
 		if (i + 1 >= itemsiz) {
 			struct item *tmp;
-
 			itemsiz += 256;
 			if (itemsiz > SIZE_MAX / sizeof(*items))
-					die("too many items");
+				die("too many items");
 			tmp = realloc(items, itemsiz * sizeof(*items));
 			if (!tmp)
 				die("cannot realloc %zu bytes:", itemsiz * sizeof(*items));
@@ -627,10 +635,10 @@ readstdin(void)
 			line[len - 1] = '\0';
 		if (!(items[i].text = strdup(line)))
 			die("strdup:");
-
 		items[i].out = 0;
 	}
 	free(line);
+
 	/* getline() also returns -1 on a read error, not just EOF */
 	if (ferror(stdin))
 		die("failed to read stdin:");
@@ -683,7 +691,6 @@ setup(void)
 	int x, y, i, j;
 	unsigned int du;
 	XSetWindowAttributes swa;
-	XIM xim;
 	Window w, dw, *dws;
 	XWindowAttributes wa;
 	XClassHint ch = {"dmenu", "dmenu"};
@@ -692,6 +699,7 @@ setup(void)
 	Window pw;
 	int a, di, n, area = 0;
 #endif
+
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
 		scheme[j] = drw_scm_create(drw, colors[j], 2);
@@ -703,6 +711,7 @@ setup(void)
 	bh = drw->fonts->h + 2;
 	lines = MAX(lines, 0);
 	mh = (lines + 1) * bh;
+
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -750,6 +759,7 @@ setup(void)
 		y = topbar ? 0 : wa.height - mh;
 		mw = wa.width;
 	}
+
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 	inputw = mw / 3; /* input width: ~33% of monitor width */
 	match();
@@ -766,7 +776,6 @@ setup(void)
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
 		die("XOpenIM failed: could not open input device");
-
 	if ((xic = XCreateIC(xim, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
 	                XNClientWindow, win, XNFocusWindow, win, NULL)) == NULL)
 		die("XCreateIC failed: could not obtain input context");
@@ -782,6 +791,7 @@ setup(void)
 		}
 		grabfocus();
 	}
+
 	drw_resize(drw, mw, mh);
 	drawmenu();
 }
@@ -790,9 +800,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
-	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
-	    "             [-ob color] [-of color] [-w windowid]\n");
+	        "usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	        "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
+	        "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
 }
 
@@ -849,6 +859,7 @@ main(int argc, char *argv[])
 	screen = DefaultScreen(dpy);
 	root = RootWindow(dpy, screen);
 	parentwin = embed ? parsewinid(embed) : root;
+
 	if (!XGetWindowAttributes(dpy, parentwin, &wa))
 		die("could not get embedding window attributes: 0x%lx",
 		    parentwin);
@@ -857,7 +868,7 @@ main(int argc, char *argv[])
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
 
-#ifdef __OpenBSD__
+#ifdef OpenBSD
 	if (pledge("stdio rpath", NULL) == -1)
 		die("pledge");
 #endif
