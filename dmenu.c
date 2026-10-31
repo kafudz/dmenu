@@ -35,7 +35,7 @@ struct item {
 };
 
 static char text[BUFSIZ] = "";
-static char embed;
+static char *embed;
 static int bh, mw, mh;
 static int inputw = 0, promptw;
 static int lrpad; /* sum of left and right padding */
@@ -476,7 +476,7 @@ keypress(XKeyEvent *ev)
 	switch(ksym) {
 	default:
 insert:
-		if (len > 0 && !iscntrl((unsigned char) buf))
+    if (len > 0 && !iscntrl((unsigned char)buf[0]))
 			insert(buf, len);
 		break;
 	case XK_Delete:
