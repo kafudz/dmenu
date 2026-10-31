@@ -20,7 +20,7 @@ dmenu: dmenu.o drw.o util.o
 	$(CC) -o $@ dmenu.o drw.o util.o $(LDFLAGS)
 
 stest: stest.o
-	$(CC) -o $@ stest.o $(LDFLAGS)
+	$(CC) -o $@ stest.o
 
 clean:
 	rm -f dmenu stest $(OBJ) dmenu-$(VERSION).tar.gz
