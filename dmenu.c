@@ -48,7 +48,7 @@ static Atom clip, utf8;
 static Display *dpy;
 static Window root, parentwin, win;
 static XIC xic;
-static XIM xim; /* FIXED: Added global xim to properly close it in cleanup */
+static XIM xim; /* global so cleanup() can close it */
 static Drw *drw;
 static Clr *scheme[SchemeLast];
 
@@ -134,8 +134,8 @@ cleanup(void)
 	for (i = 0; items && items[i].text; ++i)
 		free(items[i].text);
 	free(items);
-	
-	/* FIXED: Properly destroy X Input Context and Method to prevent X server resource leaks */
+
+	/* destroy the input context before closing its input method */
 	if (xic) {
 		XDestroyIC(xic);
 		xic = NULL;
@@ -201,8 +201,8 @@ drawmenu(void)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
 
-	/* signed arithmetic: avoids unsigned wrap when the prompt is wider than the window */
-	curpos = TEXTW(text) - TEXTW(&text[cursor]);
+	/* TEXTW() is unsigned: convert first so the subtraction is really signed */
+	curpos = (int)TEXTW(text) - (int)TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		drw_rect(drw, x + curpos, 2, 2, bh - 4, 1, 0);
@@ -353,7 +353,8 @@ insert(const char *str, ssize_t n)
 static void
 deleteback(size_t to)
 {
-	insert(NULL, -(ssize_t)(cursor - to));
+	if (to < cursor)
+		insert(NULL, -(ssize_t)(cursor - to));
 }
 
 static size_t
@@ -365,6 +366,30 @@ nextrune(int inc)
 	for (n = (ssize_t)cursor + inc; n + inc >= 0 && (text[n] & 0xc0) == 0x80; n += inc)
 		;
 	return (size_t)n;
+}
+
+/* start of the utf8 rune that ends right before byte position pos */
+static size_t
+runebefore(size_t pos)
+{
+	if (pos == 0)
+		return 0;
+	for (pos--; pos > 0 && (text[pos] & 0xc0) == 0x80; pos--)
+		;
+	return pos;
+}
+
+/* start of the word before the cursor; does not move the cursor */
+static size_t
+wordstart(void)
+{
+	size_t pos = cursor;
+
+	while (pos > 0 && strchr(worddelimiters, text[runebefore(pos)]))
+		pos = runebefore(pos);
+	while (pos > 0 && !strchr(worddelimiters, text[runebefore(pos)]))
+		pos = runebefore(pos);
+	return pos;
 }
 
 static void
@@ -427,10 +452,8 @@ keypress(XKeyEvent *ev)
 			deleteback(0);
 			break;
 		case XK_w: /* delete word */
-			while (cursor > 0 && strchr(worddelimiters, text[nextrune(-1)]))
-				deleteback(nextrune(-1));
-			while (cursor > 0 && !strchr(worddelimiters, text[nextrune(-1)]))
-				deleteback(nextrune(-1));
+			/* one deletion, so the item list is only re-matched once */
+			deleteback(wordstart());
 			break;
 		case XK_y: /* paste selection */
 		case XK_Y:
@@ -476,7 +499,7 @@ keypress(XKeyEvent *ev)
 	switch(ksym) {
 	default:
 insert:
-    if (len > 0 && !iscntrl((unsigned char)buf[0]))
+		if (len > 0 && !iscntrl((unsigned char)buf[0]))
 			insert(buf, len);
 		break;
 	case XK_Delete:
@@ -516,7 +539,7 @@ insert:
 			cursor = 0;
 			break;
 		}
-		sel = curr = matches; 
+		sel = curr = matches;
 		calcoffsets();
 		break;
 	case XK_Left:
@@ -582,6 +605,10 @@ insert:
 		if (!sel)
 			return;
 		cursor = strnlen(sel->text, sizeof text - 1);
+		/* if the item was truncated, do not cut a multi-byte rune in half */
+		if (sel->text[cursor] != '\0')
+			while (cursor > 0 && ((unsigned char)sel->text[cursor] & 0xc0) == 0x80)
+				cursor--;
 		memcpy(text, sel->text, cursor);
 		text[cursor] = '\0';
 		match();
@@ -709,7 +736,6 @@ setup(void)
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	lines = MAX(lines, 0);
 	mh = (lines + 1) * bh;
 
 #ifdef XINERAMA
