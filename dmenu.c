@@ -927,6 +927,8 @@ main(int argc, char *argv[])
 		readstdin();
 		grabkeyboard();
 	}
+	setup();
+	run();
 
 	return 1; /* unreachable */
 }
