@@ -133,7 +133,7 @@ parse_desktop_file(const char *path, struct entry *e)
 		if (!*s || *s == '#')
 			continue;
 		if (*s == '[') {
-			in_section = !strncmp(s, "[Desktop Entry]", 15) && s[15] == ']';
+			in_section = !strcmp(s, "[Desktop Entry]");
 			continue;
 		}
 		if (!in_section)
