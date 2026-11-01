@@ -20,6 +20,7 @@
 #include <X11/Xft/Xft.h>
 
 #include "drw.h"
+#include "desktop.h"
 #include "util.h"
 
 /* macros */
@@ -32,6 +33,7 @@ enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
+	char *cmd;
 	struct item *left, *right;
 	int out;
 };
@@ -136,6 +138,7 @@ cleanup(void)
 		drw_scm_free(drw, scheme[i], 2);
 	for (i = 0; items && items[i].text; ++i)
 		free(items[i].text);
+		free(items[i].cmd);
 	free(items);
 	drw_free(drw);
 	XSync(dpy, False);
@@ -542,8 +545,31 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
+		/* Desktop mode: Enter launches the selected app. */
+		if (sel && sel->cmd && !(ev->state & ShiftMask)
+		    && !(ev->state & ControlMask)) {
+			pid_t pid = fork();
+			if (pid < 0)
+				die("fork:");
+			if (pid == 0) {
+				close(ConnectionNumber(dpy));
+				setsid();
+				execl("/bin/sh", "sh", "-c", sel->cmd, (char *)NULL);
+				_exit(127);
+			}
+			cleanup();
+			exit(0);
+		}
+		/* Shift+Enter on a desktop entry prints the Exec line (useful
+		 * for scripting); otherwise the original behaviour is kept. */
+		if (sel && sel->cmd && (ev->state & ShiftMask)) {
+			puts(sel->cmd);
+			if (fflush(stdout) == EOF)
+				die("write error:");
+			cleanup();
+			exit(0);
+		}
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
-		/* flush now so multi-select (Ctrl+Return) output is not lost if we are killed */
 		if (fflush(stdout) == EOF)
 			die("write error:");
 		if (!(ev->state & ControlMask)) {
@@ -629,6 +655,7 @@ readstdin(void)
 			die("strdup:");
 
 		items[i].out = 0;
+		items[i].cmd = NULL;
 	}
 	free(line);
 	/* getline() also returns -1 on a read error, not just EOF */
@@ -790,7 +817,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "usage: dmenu [-Abifv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -801,6 +828,7 @@ main(int argc, char *argv[])
 {
 	XWindowAttributes wa;
 	int i, fast = 0;
+	int i, fast = 0, desktop = 0;      /* NEW: desktop */
 
 	for (i = 1; i < argc; i++)
 		/* these options take no arguments */
@@ -811,6 +839,8 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
+		else if (!strcmp(argv[i], "-A"))     /* NEW */
+			desktop = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -862,13 +892,40 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif
 
-	if (fast && !isatty(0)) {
+	if (desktop) {
+		grabkeyboard();
+		load_desktop();
+	} else if (fast && !isatty(0)) {
 		grabkeyboard();
 		readstdin();
 	} else {
 		readstdin();
 		grabkeyboard();
 	}
+static void
+load_desktop(void)
+{
+	DesktopApp **apps = desktop_apps_load();
+	size_t i, count = 0;
+
+	if (apps)
+		while (apps[count])
+			count++;
+
+	items = ecalloc(count + 1, sizeof *items);
+	for (i = 0; i < count; i++) {
+		items[i].text = strdup(apps[i]->name);
+		if (!items[i].text)
+			die("strdup:");
+		items[i].cmd = strdup(apps[i]->exec);
+		if (!items[i].cmd)
+			die("strdup:");
+		items[i].out = 0;
+	}
+	items[count].text = NULL;
+	items[count].cmd  = NULL;
+	desktop_apps_free(apps);
+}
 	setup();
 	run();
 
