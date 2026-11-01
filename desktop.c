@@ -211,8 +211,12 @@ expand_exec(const char *exec, const char *name, const char *icon, const char *pa
 	sbuf_add(&b, "");
 
 	for (const char *p = exec; *p; ) {
-		if (!*p) {
-			/* trailing '%' is dropped per spec */
+		if (*p != '%') {
+			sbuf_addc(&b, *p++);
+			continue;
+		}
+		p++;
+		if (!*p)
 			break;
 		switch (*p) {
 		case '%':  sbuf_addc(&b, '%'); break;
@@ -226,16 +230,15 @@ expand_exec(const char *exec, const char *name, const char *icon, const char *pa
 			}
 			break;
 		case 'c':
-			if (name) {
+			if (name)
 				sbuf_add(&b, name);
-			}
 			break;
 		case 'k':
-			if (path) {
+			if (path)
 				sbuf_add(&b, path);
 			break;
 		default:
-				break;
+			break;
 		}
 		p++;
 	}
