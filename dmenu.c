@@ -53,7 +53,6 @@ static Atom clip, utf8;
 static Display *dpy;
 static Window root, parentwin, win;
 static XIC xic;
-static XIM xim;
 
 static Drw *drw;
 static Clr *scheme[SchemeLast];
@@ -135,14 +134,6 @@ cleanup(void)
 	size_t i;
 
 	XUngrabKeyboard(dpy, CurrentTime);
-	if (xic) {
-		XDestroyIC(xic);
-		xic = NULL;
-	}
-	if (xim) {
-		XCloseIM(xim);
-		xim = NULL;
-	}
 	for (i = 0; i < SchemeLast; i++)
 		drw_scm_free(drw, scheme[i], 2);
 	for (i = 0; items && items[i].text; ++i) {
@@ -225,10 +216,8 @@ drawmenu(void)
 			drw_text(drw, x, 0, w, bh, lrpad / 2, "<", 0);
 		}
 		x += w;
-		for (item = curr; item != next; item = item->right) {
-			int avail = MAX(0, mw - x - TEXTW(">"));
-			x = drawitem(item, x, 0, textw_clamp(item->text, (unsigned int)avail));
-		}
+		for (item = curr; item != next; item = item->right)
+			x = drawitem(item, x, 0, textw_clamp(item->text, mw - x - TEXTW(">")));
 		if (next) {
 			w = TEXTW(">");
 			drw_setscheme(drw, scheme[SchemeNorm]);
@@ -747,6 +736,7 @@ setup(void)
 	int x, y, i, j;
 	unsigned int du;
 	XSetWindowAttributes swa;
+	XIM xim;
 	Window w, dw, *dws;
 	XWindowAttributes wa;
 	XClassHint ch = {"dmenu", "dmenu"};
@@ -764,11 +754,7 @@ setup(void)
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	if (bh <= 0)
-		die("invalid menu line height");
 	lines = MAX(lines, 0);
-	/* Keep the requested vertical list within the default screen. */
-	lines = MIN(lines, MAX(0, DisplayHeight(dpy, screen) / bh - 1));
 	mh = (lines + 1) * bh;
 #ifdef XINERAMA
 	i = 0;
@@ -803,8 +789,6 @@ setup(void)
 		if (i >= n)
 			i = 0;
 
-		lines = MIN(lines, MAX(0, info[i].height / bh - 1));
-		mh = (lines + 1) * bh;
 		x = info[i].x_org;
 		y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
 		mw = info[i].width;
@@ -815,23 +799,18 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		lines = MIN(lines, MAX(0, wa.height / bh - 1));
-		mh = (lines + 1) * bh;
 		x = 0;
 		y = topbar ? 0 : wa.height - mh;
 		mw = wa.width;
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
-	promptw = MIN(promptw, mw);
-	/* Reserve room for navigation markers before sizing the input. */
-	inputw = MIN(mw / 3, MAX(0, mw - promptw - TEXTW("<") - TEXTW(">")));
+	inputw = mw / 3; /* input width: ~33% of monitor width */
 	match();
 
 	/* create menu window */
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
-	/* StructureNotifyMask is required to receive DestroyNotify for win. */
-	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask | StructureNotifyMask;
+	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
 	win = XCreateWindow(dpy, root, x, y, mw, mh, 0,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
 	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
