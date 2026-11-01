@@ -279,7 +279,9 @@ binary_exists(const char *te)
 	if (!dup)
 		return 0;
 	int found = 0;
-	for (char *dir = strtok(dup, ":"); dir; dir = strtok(NULL, ":")) {
+	char *saveptr;
+	for (char *dir = strtok_r(dup, ":", &saveptr); dir;
+	     dir = strtok_r(NULL, ":", &saveptr)) {
 		char buf[PATH_MAX];
 		if ((size_t)snprintf(buf, sizeof buf, "%s/%s", dir, te) < sizeof buf
 		    && access(buf, X_OK) == 0) {
@@ -445,7 +447,9 @@ desktop_apps_load(void)
 		data_dirs = "/usr/local/share:/usr/share";
 	char *dup = strdup(data_dirs);
 	if (dup) {
-		for (char *dir = strtok(dup, ":"); dir; dir = strtok(NULL, ":")) {
+		char *saveptr;
+		for (char *dir = strtok_r(dup, ":", &saveptr); dir;
+		     dir = strtok_r(NULL, ":", &saveptr)) {
 			char path[PATH_MAX];
 			snprintf(path, sizeof path, "%s/applications", dir);
 			load_dir(path, &seen, &apps, &count, &cap);

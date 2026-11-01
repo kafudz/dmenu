@@ -22,6 +22,7 @@
 #include "drw.h"
 #include "desktop.h"
 #include "util.h"
+#include <sys/types.h>
 
 /* macros */
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
@@ -662,8 +663,10 @@ readstdin(void)
 	/* getline() also returns -1 on a read error, not just EOF */
 	if (ferror(stdin))
 		die("failed to read stdin:");
-	if (items)
-		items[i].text = NULL;
+	if (items) {
+    	items[i].text = NULL;
+    	items[i].cmd  = NULL;
+}
 	lines = (unsigned int)MIN((size_t)lines, i);
 }
 
