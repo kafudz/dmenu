@@ -136,9 +136,10 @@ cleanup(void)
 	XUngrabKeyboard(dpy, CurrentTime);
 	for (i = 0; i < SchemeLast; i++)
 		drw_scm_free(drw, scheme[i], 2);
-	for (i = 0; items && items[i].text; ++i)
+	for (i = 0; items && items[i].text; ++i) {
 		free(items[i].text);
 		free(items[i].cmd);
+	}
 	free(items);
 	drw_free(drw);
 	XSync(dpy, False);
@@ -667,6 +668,31 @@ readstdin(void)
 }
 
 static void
+load_desktop(void)
+{
+	DesktopApp **apps = desktop_apps_load();
+	size_t i, count = 0;
+
+	if (apps)
+		while (apps[count])
+			count++;
+
+	items = ecalloc(count + 1, sizeof *items);
+	for (i = 0; i < count; i++) {
+		items[i].text = strdup(apps[i]->name);
+		if (!items[i].text)
+			die("strdup:");
+		items[i].cmd = strdup(apps[i]->exec);
+		if (!items[i].cmd)
+			die("strdup:");
+		items[i].out = 0;
+	}
+	items[count].text = NULL;
+	items[count].cmd  = NULL;
+	desktop_apps_free(apps);
+}
+
+static void
 run(void)
 {
 	XEvent ev;
@@ -827,7 +853,6 @@ int
 main(int argc, char *argv[])
 {
 	XWindowAttributes wa;
-	int i, fast = 0;
 	int i, fast = 0, desktop = 0;      /* NEW: desktop */
 
 	for (i = 1; i < argc; i++)
@@ -902,30 +927,6 @@ main(int argc, char *argv[])
 		readstdin();
 		grabkeyboard();
 	}
-static void
-load_desktop(void)
-{
-	DesktopApp **apps = desktop_apps_load();
-	size_t i, count = 0;
-
-	if (apps)
-		while (apps[count])
-			count++;
-
-	items = ecalloc(count + 1, sizeof *items);
-	for (i = 0; i < count; i++) {
-		items[i].text = strdup(apps[i]->name);
-		if (!items[i].text)
-			die("strdup:");
-		items[i].cmd = strdup(apps[i]->exec);
-		if (!items[i].cmd)
-			die("strdup:");
-		items[i].out = 0;
-	}
-	items[count].text = NULL;
-	items[count].cmd  = NULL;
-	desktop_apps_free(apps);
-}
 	setup();
 	run();
 
