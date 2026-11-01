@@ -65,7 +65,7 @@ main(int argc, char *argv[])
 	size_t linesiz = 0;
 	ssize_t n;
 	DIR *dir;
-	int r, err = 0;
+	int r;
 
 	ARGBEGIN {
 	case 'n': /* newer than file */
@@ -90,43 +90,24 @@ main(int argc, char *argv[])
 			test(line, line);
 		}
 		free(line);
-		/* getline() returns -1 on a read error as well as on EOF */
-		if (ferror(stdin)) {
-			perror("stdin");
-			err = 1;
-		}
 	} else {
 		for (; argc; argc--, argv++) {
 			if (FLAG('l') && (dir = opendir(*argv))) {
-				/*
-				 * Test directory contents. errno is cleared before every
-				 * readdir(): test() makes stat()/access() calls that fail
-				 * routinely (a non-executable file, a dangling symlink), and
-				 * their leftover errno would otherwise be reported below as
-				 * if readdir() had failed.
-				 */
-				for (errno = 0; (d = readdir(dir)); errno = 0) {
+				/* test directory contents */
+				errno = 0;
+				while ((d = readdir(dir))) {
 					r = snprintf(path, sizeof path, "%s/%s",
 					             *argv, d->d_name);
 					if (r >= 0 && (size_t)r < sizeof path)
 						test(path, d->d_name);
 				}
-				if (errno) {
+				if (errno)
 					perror(*argv);
-					err = 1;
-				}
 				closedir(dir);
 			} else {
 				test(*argv, *argv);
 			}
 		}
 	}
-	/* a lost result (full disk, closed pipe) must not look like success */
-	if (fflush(stdout) == EOF || ferror(stdout)) {
-		perror("stdout");
-		err = 1;
-	}
-	if (err)
-		return 2; /* like test(1): greater than 1 means an error */
 	return match ? 0 : 1;
 }

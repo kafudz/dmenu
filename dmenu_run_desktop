@@ -1,3 +1,0 @@
-#!/bin/sh
-# source | dmenu "$@" | executor
-find /usr/share/applications ~/.local/share/applications -name '*.desktop' 2>/dev/null | sed 's|.*/||; s|\.desktop$||' | dmenu "$@" | xargs -r gtk-launch

@@ -1,24 +1,2 @@
 #!/bin/sh
-# Pick a command with dmenu and run it with the user's shell.
-
-# dmenu needs a UTF-8 locale for its input method and for non-ASCII text
-# (e.g. Nerd Font icons). If the session has none, give one to dmenu alone.
-run_dmenu() {
-	case ${LC_ALL:-${LC_CTYPE:-$LANG}} in
-	*[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*) dmenu "$@" ;;
-	*) LC_ALL=C.UTF-8 dmenu "$@" ;;
-	esac
-}
-
-# Prefer the dmenu_path installed next to this script, so a minimal PATH
-# (for example right after login) does not matter. Fall back to PATH.
-path_cmd=dmenu_path
-case $0 in
-*/*) [ -x "${0%/*}/dmenu_path" ] && path_cmd=${0%/*}/dmenu_path ;;
-esac
-
-# $SHELL may be unset or point at something that cannot run commands
-shell=${SHELL:-/bin/sh}
-[ -x "$shell" ] || shell=/bin/sh
-
-"$path_cmd" | run_dmenu "$@" | "$shell" &
+dmenu_path | dmenu "$@" | ${SHELL:-"/bin/sh"} &

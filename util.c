@@ -4,52 +4,34 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "util.h"
 
 void
 die(const char *fmt, ...)
 {
 	va_list ap;
-	int saved_errno = errno; /* save first: stdio calls below may change it */
+	int saved_errno;
+
+	saved_errno = errno;
 
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
 
-	if (fmt[0] && fmt[strlen(fmt) - 1] == ':')
+	if (fmt[0] && fmt[strlen(fmt)-1] == ':')
 		fprintf(stderr, " %s", strerror(saved_errno));
 	fputc('\n', stderr);
+
 	exit(1);
 }
 
 void *
 ecalloc(size_t nmemb, size_t size)
 {
-	void *p = calloc(nmemb, size);
+	void *p;
 
-	/* a NULL result is legitimate for a zero-sized request */
-	if (!p && nmemb && size)
+	if (!(p = calloc(nmemb, size)))
 		die("calloc:");
-	return p;
-}
-
-void *
-erealloc(void *p, size_t size)
-{
-	void *q;
-
-	/* realloc(p, 0) may free p and return NULL, so ask for one byte */
-	if (!(q = realloc(p, size ? size : 1)))
-		die("realloc:");
-	return q;
-}
-
-char *
-estrdup(const char *s)
-{
-	char *p;
-
-	if (!(p = strdup(s)))
-		die("strdup:");
 	return p;
 }
