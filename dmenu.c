@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -22,7 +23,6 @@
 #include "drw.h"
 #include "desktop.h"
 #include "util.h"
-#include <sys/types.h>
 
 /* macros */
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
@@ -664,8 +664,8 @@ readstdin(void)
 	if (ferror(stdin))
 		die("failed to read stdin:");
 	if (items) {
-    	items[i].text = NULL;
-    	items[i].cmd  = NULL;
+    		items[i].text = NULL;
+    		items[i].cmd  = NULL;
 }
 	lines = (unsigned int)MIN((size_t)lines, i);
 }
@@ -692,6 +692,7 @@ load_desktop(void)
 	}
 	items[count].text = NULL;
 	items[count].cmd  = NULL;
+	lines = (unsigned int)MIN((size_t)lines, count);
 	desktop_apps_free(apps);
 }
 

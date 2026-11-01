@@ -34,9 +34,14 @@ struct sbuf { char *s; size_t len, cap; };
 static void
 sbuf_grow(struct sbuf *b, size_t need)
 {
-	if (b->len + need + 1 > b->cap) {
+	size_t want;
+
+	if (need > SIZE_MAX - b->len - 1)
+		die("string too long");
+	want = b->len + need + 1;
+	if (want > b->cap) {
 		size_t n = b->cap ? b->cap : 64;
-		while (n < b->len + need + 1)
+		while (n < want)
 			n *= 2;
 		char *p = realloc(b->s, n);
 		if (!p)
@@ -174,6 +179,10 @@ parse_desktop_file(const char *path, struct entry *e)
 		}
 	}
 	free(line);
+	if (ferror(f)) {
+			fclose(f);
+			return -1;
+	}
 	fclose(f);
 
 	if (!type_ok || !got_exec || !e->name || !*e->name)
@@ -201,12 +210,8 @@ expand_exec(const char *exec, const char *name, const char *icon, const char *pa
 	sbuf_add(&b, "");
 
 	for (const char *p = exec; *p; ) {
-		if (*p != '%') {
-			sbuf_addc(&b, *p++);
-			continue;
-		}
-		p++;
-		if (!*p)
+		if (!*p) {
+			/* trailing '%' is dropped per spec */
 			break;
 		switch (*p) {
 		case '%':  sbuf_addc(&b, '%'); break;
