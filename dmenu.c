@@ -564,12 +564,8 @@ insert:
 		}
 		/* Shift+Enter on a desktop entry prints the Exec line (useful
 		 * for scripting); otherwise the original behaviour is kept. */
-		if (sel && sel->cmd && (ev->state & ShiftMask)) {
-			puts(sel->cmd);
-			if (fflush(stdout) == EOF)
-				die("write error:");
-			cleanup();
-			exit(0);
+		if (sel && sel->cmd && (ev->state & ShiftMask)
+		    && !(ev->state & ControlMask)) {
 		}
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (fflush(stdout) == EOF)
