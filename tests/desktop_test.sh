@@ -60,5 +60,16 @@ check "sorted case-insensitively" "alpha
 Beta" "$(printf '%s\n' "$out" | cut -f1 | grep -E '^(alpha|Beta)$')"
 has x "$(run env XDG_CURRENT_DESKTOP=KDE)" KdeOnly && echo "ok   KdeOnly shown on KDE" || { echo "FAIL KDE"; fail=1; }
 has x "$(run env TERMINAL=st XDG_CURRENT_DESKTOP=x)" "Term${tab}st -e htop$" && echo "ok   \$TERMINAL honoured" || { echo "FAIL TERMINAL"; fail=1; }
+# security: non-regular and oversized files must be ignored, never block
+mkfifo "$tmp/sys2/applications/fifo.desktop"
+ln -s /dev/zero "$tmp/sys2/applications/zero.desktop"
+{ printf '[Desktop Entry]\nType=Application\nName=Huge\nExec='; head -c 2000000 /dev/zero | tr '\0' a; echo; } > "$tmp/sys2/applications/huge.desktop"
+mk sys2 realtarget LinkedOk 'Exec=linked'
+ln -s "$tmp/sys2/applications/realtarget.desktop" "$tmp/sys2/applications/symlink.desktop"
+sec=$(run timeout 10 env XDG_CURRENT_DESKTOP=x); rc=$?
+[ $rc -eq 0 ] && echo "ok   FIFO/device .desktop files do not hang" || { echo "FAIL hang or crash (rc=$rc)"; fail=1; }
+has x "$sec" Huge && { echo "FAIL oversized file accepted"; fail=1; } || echo "ok   oversized .desktop ignored"
+has x "$sec" "LinkedOk${tab}linked" && echo "ok   symlinked .desktop still loads" || { echo "FAIL symlink"; fail=1; }
+rm -f "$tmp/sys2/applications/fifo.desktop" "$tmp/sys2/applications/zero.desktop"
 check "no dirs -> empty list" "" "$(XDG_DATA_HOME=/nonexistent XDG_DATA_DIRS=/nonexistent "$dump")"
 exit $fail

@@ -1,6 +1,9 @@
 /* See LICENSE file for copyright and license details. */
+#include <sys/stat.h>
+
 #include <ctype.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +18,7 @@
 
 #define DESKTOP_SUFFIX     ".desktop"
 #define DESKTOP_SUFFIX_LEN (sizeof DESKTOP_SUFFIX - 1)
+#define MAX_DESKTOP_SIZE   (1024 * 1024) /* ignore larger .desktop files */
 
 /* One parsed [Desktop Entry] */
 struct entry {
@@ -178,20 +182,52 @@ set_field(struct entry *e, const char *key, const char *val)
 		}
 }
 
+/*
+ * Open path only if it is a regular file of sane size. The data dirs are
+ * user-writable, and dmenu holds the keyboard grab while it scans them, so a
+ * FIFO or device named *.desktop must not be able to block (O_NONBLOCK makes
+ * open() on a FIFO return at once) and a huge file must not eat all memory.
+ * Symlinks are followed on purpose: distributions install .desktop files that way.
+ */
+static FILE *
+open_regular(const char *path)
+{
+	struct stat st;
+	FILE *f;
+	int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+
+	if (fd < 0)
+		return NULL;
+	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > MAX_DESKTOP_SIZE ||
+	    !(f = fdopen(fd, "r"))) {
+		close(fd);
+		return NULL;
+	}
+	return f;
+}
+
 /* Parse one file. Return 0 on success and fill e; -1 otherwise. */
 static int
 parse_desktop_file(const char *path, struct entry *e)
 {
-	FILE *f = fopen(path, "r");
+	FILE *f = open_regular(path);
 	char *line = NULL;
-	size_t linesiz = 0;
+	size_t linesiz = 0, total = 0;
+	ssize_t n;
 	int in_section = 0, type_ok = 0, err;
 
 	if (!f)
 		return -1;
 
-	while (getline(&line, &linesiz, f) != -1) {
-		char *s = trim(line), *eq;
+	while ((n = getline(&line, &linesiz, f)) != -1) {
+		char *s, *eq;
+
+		/* the file may have grown since fstat(): enforce the cap again */
+		if ((total += (size_t)n) > MAX_DESKTOP_SIZE) {
+			type_ok = 0;
+			break;
+		}
+		s = trim(line);
 
 		if (!*s || *s == '#')
 			continue;

@@ -628,9 +628,11 @@ paste(void)
 	if (XGetWindowProperty(dpy, win, utf8, 0, (sizeof text / 4) + 1, False,
 	                   utf8, &da, &di, &dl, &dl, &p)
 	    == Success && p) {
-		/* only the first line of the selection is used */
-		insert((char *)p, (q = (unsigned char *)strchr((char *)p, '\n'))
-		                  ? (ssize_t)(q - p) : (ssize_t)strlen((char *)p));
+		/* the selection owner is another client: only accept 8-bit
+		 * data, anything else is not text. Only the first line is used. */
+		if (di == 8)
+			insert((char *)p, (q = (unsigned char *)strchr((char *)p, '\n'))
+			                  ? (ssize_t)(q - p) : (ssize_t)strlen((char *)p));
 		XFree(p);
 	}
 	drawmenu();
