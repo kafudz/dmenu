@@ -1,6 +1,7 @@
 /* See LICENSE file for copyright and license details. */
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,18 @@ ecalloc(size_t nmemb, size_t size)
 
 	if (!(p = calloc(nmemb, size)))
 		die("calloc:");
+	return p;
+}
+
+void *
+ereallocarray(void *ptr, size_t nmemb, size_t size)
+{
+	void *p;
+
+	if (size && nmemb > SIZE_MAX / size)
+		die("allocation too large: %zu x %zu bytes", nmemb, size);
+	if (!(p = realloc(ptr, nmemb * size)) && nmemb && size)
+		die("realloc:");
 	return p;
 }
 

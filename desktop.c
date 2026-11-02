@@ -55,8 +55,7 @@ sbuf_grow(struct sbuf *b, size_t need)
 		}
 		n *= 2;
 	}
-	if (!(b->s = realloc(b->s, n)))
-		die("realloc:");
+	b->s = ereallocarray(b->s, n, 1);
 	b->cap = n;
 }
 
@@ -442,6 +441,15 @@ cmp_apps(const void *a, const void *b)
 
 /* ---- directory scanning ------------------------------------------- */
 
+/* Next capacity when growing an array: doubles, without wrapping. */
+static size_t
+grown(size_t cap)
+{
+	if (cap > SIZE_MAX / 2)
+		die("too many entries");
+	return cap ? cap * 2 : 64;
+}
+
 struct app_list { DesktopApp **v; size_t count, cap; };
 
 static void
@@ -449,12 +457,9 @@ app_list_push(struct app_list *l, DesktopApp *app)
 {
 	/* always keep one spare slot for the NULL terminator */
 	if (l->count + 2 > l->cap) {
-		size_t n = l->cap ? l->cap * 2 : 64;
-		DesktopApp **tmp = realloc(l->v, n * sizeof *tmp);
+		size_t n = grown(l->cap);
 
-		if (!tmp)
-			die("realloc:");
-		l->v = tmp;
+		l->v = ereallocarray(l->v, n, sizeof *l->v);
 		l->cap = n;
 	}
 	l->v[l->count++] = app;
@@ -473,12 +478,9 @@ seen_first(struct seen_list *s, const char *base)
 		if (!strcmp(s->names[i], base))
 			return 0;
 	if (s->count + 1 > s->cap) {
-		size_t n = s->cap ? s->cap * 2 : 64;
-		char **tmp = realloc(s->names, n * sizeof *tmp);
+		size_t n = grown(s->cap);
 
-		if (!tmp)
-			die("realloc:");
-		s->names = tmp;
+		s->names = ereallocarray(s->names, n, sizeof *s->names);
 		s->cap = n;
 	}
 	s->names[s->count++] = estrdup(base);

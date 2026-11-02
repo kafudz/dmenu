@@ -261,13 +261,18 @@ fallback_font(Drw *drw, long codepoint)
 	if (nomatches[h0] == codepoint || nomatches[h1] == codepoint)
 		return drw->fonts;
 
-	fccharset = FcCharSetCreate();
-	FcCharSetAddChar(fccharset, codepoint);
-
 	if (!drw->fonts->pattern)
 		die("the first font in the cache must be loaded from a font string.");
 
-	fcpattern = FcPatternDuplicate(drw->fonts->pattern);
+	/* fontconfig returns NULL when out of memory: keep the current font */
+	if (!(fccharset = FcCharSetCreate()))
+		return NULL;
+	FcCharSetAddChar(fccharset, codepoint);
+
+	if (!(fcpattern = FcPatternDuplicate(drw->fonts->pattern))) {
+		FcCharSetDestroy(fccharset);
+		return NULL;
+	}
 	FcPatternAddCharSet(fcpattern, FC_CHARSET, fccharset);
 	FcPatternAddBool(fcpattern, FC_SCALABLE, FcTrue);
 
@@ -323,13 +328,11 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 		XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
 		if (w < lpad)
 			return x + w;
-		if (w < lpad)
-			return x + w;
-		if (w < lpad)
-			return x + w;
 		d = XftDrawCreate(drw->dpy, drw->drawable,
 		                  DefaultVisual(drw->dpy, drw->screen),
 		                  DefaultColormap(drw->dpy, drw->screen));
+		if (!d)
+			die("cannot create Xft draw context");
 		x += lpad;
 		w -= lpad;
 	}
