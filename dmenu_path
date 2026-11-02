@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# dmenu_run feeds this cache to a shell, so keep it private to the user.
+umask 077
+# PATH entries are directory names, not glob patterns.
+set -f
+
 cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
 cache="$cachedir/dmenu_run"
 
