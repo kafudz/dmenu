@@ -80,3 +80,16 @@ software from source before, this will look familiar.
 ```sh
 sudo apt install build-essential libx11-dev libxft-dev libxinerama-dev \
                  libfontconfig1-dev libfreetype6-dev pkg-config
+```
+
+**Arch**
+
+```sh
+sudo pacman -S base-devel libx11 libxft libxinerama fontconfig freetype2
+```
+
+**fedora**
+
+```sh
+sudo dnf install gcc make libX11-devel libXft-devel libXinerama-devel \
+                 fontconfig-devel freetype-devel pkgconf-pkg-config
