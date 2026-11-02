@@ -19,6 +19,9 @@
  * appends strerror(errno), like perror(3). */
 void die(const char *fmt, ...) DIE_ATTR;
 void *ecalloc(size_t nmemb, size_t size);
+/* realloc(ptr, nmemb * size) that dies if the multiplication would overflow
+ * or the allocation fails; never returns NULL for a nonzero size. */
+void *ereallocarray(void *ptr, size_t nmemb, size_t size);
 char *estrdup(const char *s);
 
 #endif
