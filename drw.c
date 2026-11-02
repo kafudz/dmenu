@@ -237,6 +237,61 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 		XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w - 1, h - 1);
 }
 
+/*
+ * Find a font that has a glyph for codepoint, loading it into the font set on
+ * first use. Returns the new font; drw->fonts when no font has the glyph (this
+ * negative answer is cached); or NULL when fontconfig offers no candidate at
+ * all, in which case the caller keeps the font it is using.
+ */
+static Fnt *
+fallback_font(Drw *drw, long codepoint)
+{
+	static unsigned int nomatches[128];
+	unsigned int hash, h0, h1;
+	FcCharSet *fccharset;
+	FcPattern *fcpattern, *match;
+	XftResult result;
+	Fnt *font, *last;
+
+	hash = (unsigned int)codepoint;
+	hash = ((hash >> 16) ^ hash) * 0x21F0AAAD;
+	hash = ((hash >> 15) ^ hash) * 0xD35A2D97;
+	h0 = ((hash >> 15) ^ hash) % LENGTH(nomatches);
+	h1 = (hash >> 17) % LENGTH(nomatches);
+	if (nomatches[h0] == codepoint || nomatches[h1] == codepoint)
+		return drw->fonts;
+
+	fccharset = FcCharSetCreate();
+	FcCharSetAddChar(fccharset, codepoint);
+
+	if (!drw->fonts->pattern)
+		die("the first font in the cache must be loaded from a font string.");
+
+	fcpattern = FcPatternDuplicate(drw->fonts->pattern);
+	FcPatternAddCharSet(fcpattern, FC_CHARSET, fccharset);
+	FcPatternAddBool(fcpattern, FC_SCALABLE, FcTrue);
+
+	FcConfigSubstitute(NULL, fcpattern, FcMatchPattern);
+	FcDefaultSubstitute(fcpattern);
+	match = XftFontMatch(drw->dpy, drw->screen, fcpattern, &result);
+
+	FcCharSetDestroy(fccharset);
+	FcPatternDestroy(fcpattern);
+
+	if (!match)
+		return NULL;
+	font = xfont_create(drw, NULL, match);
+	if (font && XftCharExists(drw->dpy, font->xfont, codepoint)) {
+		for (last = drw->fonts; last->next; last = last->next)
+			; /* NOP */
+		last->next = font;
+		return font;
+	}
+	xfont_free(font);
+	nomatches[nomatches[h0] ? h1 : h0] = codepoint;
+	return drw->fonts;
+}
+
 int
 drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert)
 {
@@ -248,18 +303,14 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	 * drw_fontset_getwidth_clamp(); audit both before changing.
 	 */
 	int ty, ellipsis_x = 0;
-	unsigned int tmpw, ew, ellipsis_w = 0, ellipsis_len, hash, h0, h1;
+	unsigned int tmpw, ew, ellipsis_w = 0, ellipsis_len;
 	XftDraw *d = NULL;
 	Fnt *usedfont, *curfont, *nextfont;
 	int utf8strlen, utf8charlen, utf8err, render = x || y || w || h;
 	long utf8codepoint = 0;
 	const char *utf8str;
-	FcCharSet *fccharset;
-	FcPattern *fcpattern;
-	FcPattern *match;
-	XftResult result;
 	int charexists = 0, overflow = 0;
-	static unsigned int nomatches[128], ellipsis_width, invalid_width;
+	static unsigned int ellipsis_width, invalid_width;
 	static const char invalid[] = "�";
 
 	if (!drw || (render && (!drw->scheme || !w)) || !text || !drw->fonts)
@@ -347,47 +398,11 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 			charexists = 0;
 			usedfont = nextfont;
 		} else {
+			Fnt *fallback;
+
 			charexists = 1;
-
-			hash = (unsigned int)utf8codepoint;
-			hash = ((hash >> 16) ^ hash) * 0x21F0AAAD;
-			hash = ((hash >> 15) ^ hash) * 0xD35A2D97;
-			h0 = ((hash >> 15) ^ hash) % LENGTH(nomatches);
-			h1 = (hash >> 17) % LENGTH(nomatches);
-			if (nomatches[h0] == utf8codepoint || nomatches[h1] == utf8codepoint)
-				goto no_match;
-
-			fccharset = FcCharSetCreate();
-			FcCharSetAddChar(fccharset, utf8codepoint);
-
-			if (!drw->fonts->pattern) {
-				die("the first font in the cache must be loaded from a font string.");
-			}
-
-			fcpattern = FcPatternDuplicate(drw->fonts->pattern);
-			FcPatternAddCharSet(fcpattern, FC_CHARSET, fccharset);
-			FcPatternAddBool(fcpattern, FC_SCALABLE, FcTrue);
-
-			FcConfigSubstitute(NULL, fcpattern, FcMatchPattern);
-			FcDefaultSubstitute(fcpattern);
-			match = XftFontMatch(drw->dpy, drw->screen, fcpattern, &result);
-
-			FcCharSetDestroy(fccharset);
-			FcPatternDestroy(fcpattern);
-
-			if (match) {
-				usedfont = xfont_create(drw, NULL, match);
-				if (usedfont && XftCharExists(drw->dpy, usedfont->xfont, utf8codepoint)) {
-					for (curfont = drw->fonts; curfont->next; curfont = curfont->next)
-						; /* NOP */
-					curfont->next = usedfont;
-				} else {
-					xfont_free(usedfont);
-					nomatches[nomatches[h0] ? h1 : h0] = utf8codepoint;
-no_match:
-					usedfont = drw->fonts;
-				}
-			}
+			if ((fallback = fallback_font(drw, utf8codepoint)))
+				usedfont = fallback;
 		}
 	}
 	if (d)
