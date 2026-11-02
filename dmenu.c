@@ -34,7 +34,8 @@ enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
-	char *cmd;
+	char *cmd;    /* desktop mode: command line to display/print */
+	char **argv;  /* desktop mode: what to run, with execvp() */
 	struct item *left, *right;
 	int out;
 };
@@ -140,6 +141,7 @@ cleanup(void)
 	for (i = 0; items && items[i].text; ++i) {
 		free(items[i].text);
 		free(items[i].cmd);
+		desktop_argv_free(items[i].argv);
 	}
 	free(items);
 	drw_free(drw);
@@ -378,9 +380,22 @@ movewordedge(int dir)
 	}
 }
 
-/* Start cmd in its own session so it outlives dmenu, which is about to exit. */
+/* Is s a leading NAME=value word, as in `FOO=1 app`? */
+static int
+isenvassign(const char *s)
+{
+	size_t n = strspn(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_");
+
+	return n && s[n] == '=' && !isdigit((unsigned char)*s);
+}
+
+/*
+ * Run argv in its own session so it outlives dmenu, which is about to exit.
+ * No shell is involved: the arguments come from a .desktop file and must not
+ * be interpreted.
+ */
 static void
-launch(const char *cmd)
+launch(char **argv)
 {
 	pid_t pid = fork();
 
@@ -389,7 +404,13 @@ launch(const char *cmd)
 	if (pid == 0) {
 		close(ConnectionNumber(dpy));
 		setsid();
-		execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+		/* leading NAME=value words set the environment, like a shell */
+		for (; *argv && isenvassign(*argv); argv++)
+			putenv(*argv);
+		if (*argv) {
+			execvp(*argv, argv);
+			perror(*argv);
+		}
 		_exit(127);
 	}
 }
@@ -571,7 +592,7 @@ insert:
 				if (fflush(stdout) == EOF)
 					die("write error:");
 			} else {
-				launch(sel->cmd);
+				launch(sel->argv);
 			}
 			cleanup();
 			exit(0);
@@ -660,6 +681,7 @@ readstdin(void)
 		items[i].text = estrdup(line);
 		items[i].out = 0;
 		items[i].cmd = NULL;
+		items[i].argv = NULL;
 	}
 	free(line);
 	/* getline() also returns -1 on a read error, not just EOF */
@@ -668,6 +690,7 @@ readstdin(void)
 	if (items) {
 		items[i].text = NULL;
 		items[i].cmd  = NULL;
+		items[i].argv = NULL;
 	}
 	lines = (unsigned int)MIN((size_t)lines, i);
 }
@@ -688,7 +711,9 @@ load_desktop(void)
 		 * desktop_apps_free() skips the NULLs left behind */
 		items[i].text = apps[i]->name;
 		items[i].cmd  = apps[i]->exec;
+		items[i].argv = apps[i]->argv;
 		apps[i]->name = apps[i]->exec = NULL;
+		apps[i]->argv = NULL;
 	}
 	lines = (unsigned int)MIN((size_t)lines, count);
 	desktop_apps_free(apps);

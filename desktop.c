@@ -33,6 +33,15 @@ struct entry {
 	int   terminal;
 };
 
+/* Next capacity when growing an array: doubles, without wrapping. */
+static size_t
+grown(size_t cap)
+{
+	if (cap > SIZE_MAX / 2)
+		die("too many entries");
+	return cap ? cap * 2 : 64;
+}
+
 /* ---- tiny string builder ------------------------------------------- */
 
 struct sbuf { char *s; size_t len, cap; };
@@ -267,50 +276,189 @@ entry_free(struct entry *e)
 	free(e->not_show_in);
 }
 
-/* ---- Exec field-code expansion (%f %F %u %U %i %c %k %%) ---------- */
+/* ---- Exec parsing and field-code expansion ------------------------ */
 
 /*
- * The result is meant for `sh -c`. The Exec= value is passed through as is
- * (shell quoting is close enough to the spec's), but text we substitute in
- * is quoted so names containing spaces or quotes stay one argument.
+ * Exec= is not a shell command line. The Desktop Entry spec defines its own
+ * quoting (double quotes, with \" \` \$ \\ escapes inside them) and field
+ * codes (%f %F %u %U %i %c %k %%). We parse it into an argv that is run with
+ * execvp(), so shell syntax in a .desktop file (; | & $(...) `...` > ...) is
+ * plain argument text and is never interpreted.
  */
-static char *
-expand_exec(const char *exec, const char *name, const char *icon, const char *path)
-{
-	struct sbuf b = {0};
+struct argvec { char **v; size_t n, cap; };
 
-	for (const char *p = exec; *p; p++) {
-		if (*p != '%') {
-			sbuf_addc(&b, *p);
+static void
+argvec_push(struct argvec *a, char *s)
+{
+	/* room for the new entry and the NULL terminator */
+	if (a->n + 2 > a->cap) {
+		size_t cap = grown(a->cap);
+
+		a->v = ereallocarray(a->v, cap, sizeof *a->v);
+		a->cap = cap;
+	}
+	a->v[a->n++] = s;
+	a->v[a->n] = NULL;
+}
+
+void
+desktop_argv_free(char **argv)
+{
+	size_t i;
+
+	if (!argv)
+		return;
+	for (i = 0; argv[i]; i++)
+		free(argv[i]);
+	free(argv);
+}
+
+static char *
+dupn(const char *s, size_t n)
+{
+	char *p = ecalloc(n + 1, 1);
+
+	memcpy(p, s, n);
+	return p;
+}
+
+/*
+ * Split exec into arguments, expanding field codes. Returns a NULL-terminated
+ * vector, or NULL if exec is malformed (unterminated quote) or empty.
+ */
+static char **
+parse_exec(const char *exec, const char *name, const char *icon, const char *path)
+{
+	struct argvec args = {0};
+	const char *p = exec;
+
+	for (;;) {
+		struct sbuf w = {0};
+		int quoted = 0, have = 0;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (!*p)
+			break;
+
+		/* a lone %i is two arguments: --icon <name> */
+		if (p[0] == '%' && p[1] == 'i' && (!p[2] || p[2] == ' ' || p[2] == '\t')) {
+			if (icon && *icon) {
+				argvec_push(&args, estrdup("--icon"));
+				argvec_push(&args, estrdup(icon));
+			}
+			p += 2;
 			continue;
 		}
-		if (!*++p)
-			break;
-		switch (*p) {
-		case '%':
-			sbuf_addc(&b, '%');
-			break;
-		case 'i':
-			if (icon && *icon) {
-				sbuf_add(&b, "--icon ");
-				sbuf_addquoted(&b, icon);
+
+		for (; *p && (quoted || (*p != ' ' && *p != '\t')); p++) {
+			if (*p == '"') {
+				quoted = !quoted;
+				have = 1; /* "" is an empty argument */
+				continue;
 			}
-			break;
-		case 'c':
-			if (name)
-				sbuf_addquoted(&b, name);
-			break;
-		case 'k':
-			if (path)
-				sbuf_addquoted(&b, path);
-			break;
-		default:
-			/* %f %F %u %U (no file or URL is supplied) and the
-			 * deprecated codes expand to nothing */
-			break;
+			if (quoted && *p == '\\' && p[1] && strchr("\"`$\\", p[1])) {
+				p++; /* escaped character: take it literally */
+			} else if (*p == '%') {
+				switch (*++p) {
+				case '%':
+					sbuf_addc(&w, '%');
+					have = 1;
+					break;
+				case 'i':
+					if (icon && *icon) {
+						sbuf_add(&w, icon);
+						have = 1;
+					}
+					break;
+				case 'c':
+					sbuf_add(&w, name);
+					have = 1;
+					break;
+				case 'k':
+					if (path) {
+						sbuf_add(&w, path);
+						have = 1;
+					}
+					break;
+				case '\0':
+					p--; /* trailing '%': let the loop end */
+					break;
+				default:
+					/* %f %F %u %U (no file or URL is supplied) and
+					 * the deprecated codes expand to nothing */
+					break;
+				}
+				continue;
+			}
+			sbuf_addc(&w, *p);
+			have = 1;
 		}
+		if (quoted) { /* unterminated quote */
+			free(w.s);
+			desktop_argv_free(args.v);
+			return NULL;
+		}
+		if (have)
+			argvec_push(&args, sbuf_take(&w));
+		else
+			free(w.s); /* e.g. a bare %U: no argument at all */
+	}
+	return args.v; /* NULL if there was nothing to run */
+}
+
+/* Does s need shell quoting to be shown as a command line? */
+static int
+needs_quote(const char *s)
+{
+	if (!*s)
+		return 1;
+	for (; *s; s++)
+		if (!isalnum((unsigned char)*s) && !strchr("_@%+=:,./-", *s))
+			return 1;
+	return 0;
+}
+
+/* Join argv into one shell-safe line (for display and Shift+Enter output). */
+static char *
+argv_to_string(char **argv)
+{
+	struct sbuf b = {0};
+	size_t i;
+
+	for (i = 0; argv[i]; i++) {
+		if (i)
+			sbuf_addc(&b, ' ');
+		if (needs_quote(argv[i]))
+			sbuf_addquoted(&b, argv[i]);
+		else
+			sbuf_add(&b, argv[i]);
 	}
 	return sbuf_take(&b);
+}
+
+/* Prefix argv with $TERMINAL (default xterm) and -e. Takes over argv. */
+static char **
+wrap_in_terminal(char **argv)
+{
+	struct argvec out = {0};
+	const char *term = getenv("TERMINAL"), *p;
+	size_t i, n;
+
+	for (p = term && *term ? term : ""; *p; p += n) {
+		while (*p == ' ' || *p == '\t')
+			p++;
+		n = strcspn(p, " \t");
+		if (n)
+			argvec_push(&out, dupn(p, n));
+	}
+	if (!out.n)
+		argvec_push(&out, estrdup("xterm"));
+	argvec_push(&out, estrdup("-e"));
+	for (i = 0; argv[i]; i++)
+		argvec_push(&out, argv[i]);
+	free(argv); /* the strings now belong to out */
+	return out.v;
 }
 
 /* ---- XDG filtering ------------------------------------------------- */
@@ -399,32 +547,27 @@ app_is_visible(const struct entry *e)
 
 /* ---- convert entry -> DesktopApp ---------------------------------- */
 
+/* Returns NULL if the entry's Exec= cannot be parsed into a command. */
 static DesktopApp *
 entry_to_app(const struct entry *e, const char *desktop_path)
 {
-	DesktopApp *app = ecalloc(1, sizeof *app);
-	char *cmd = expand_exec(e->exec, e->name, e->icon, desktop_path);
+	DesktopApp *app;
+	char **argv = parse_exec(e->exec, e->name, e->icon, desktop_path);
 	char *c;
 
+	if (!argv)
+		return NULL;
+	if (e->terminal)
+		argv = wrap_in_terminal(argv);
+
+	app = ecalloc(1, sizeof *app);
+	app->argv = argv;
+	app->exec = argv_to_string(argv);
 	app->name = estrdup(e->name);
 	/* a menu item is one line: neutralise newlines and other controls */
 	for (c = app->name; *c; c++)
 		if ((unsigned char)*c < 0x20 || *c == 0x7f)
 			*c = ' ';
-
-	if (e->terminal) {
-		/* Wrap in a terminal: $TERMINAL, falling back to xterm. */
-		const char *term = getenv("TERMINAL");
-		struct sbuf b = {0};
-
-		sbuf_add(&b, term && *term ? term : "xterm");
-		sbuf_add(&b, " -e ");
-		sbuf_add(&b, cmd);
-		free(cmd);
-		app->exec = sbuf_take(&b);
-	} else {
-		app->exec = cmd;
-	}
 	return app;
 }
 
@@ -440,15 +583,6 @@ cmp_apps(const void *a, const void *b)
 }
 
 /* ---- directory scanning ------------------------------------------- */
-
-/* Next capacity when growing an array: doubles, without wrapping. */
-static size_t
-grown(size_t cap)
-{
-	if (cap > SIZE_MAX / 2)
-		die("too many entries");
-	return cap ? cap * 2 : 64;
-}
 
 struct app_list { DesktopApp **v; size_t count, cap; };
 
@@ -516,8 +650,12 @@ load_dir(const char *dir, struct seen_list *seen, struct app_list *apps)
 		if (r < 0 || (size_t)r >= sizeof path)
 			continue;
 
-		if (parse_desktop_file(path, &e) == 0 && app_is_visible(&e))
-			app_list_push(apps, entry_to_app(&e, path));
+		if (parse_desktop_file(path, &e) == 0 && app_is_visible(&e)) {
+			DesktopApp *app = entry_to_app(&e, path);
+
+			if (app)
+				app_list_push(apps, app);
+		}
 		entry_free(&e);
 	}
 	closedir(d);
@@ -592,6 +730,7 @@ desktop_apps_free(DesktopApp **apps)
 	for (i = 0; apps[i]; i++) {
 		free(apps[i]->name);
 		free(apps[i]->exec);
+		desktop_argv_free(apps[i]->argv);
 		free(apps[i]);
 	}
 	free(apps);
