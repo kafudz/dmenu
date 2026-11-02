@@ -46,7 +46,11 @@ dmenu lists the desktop applications found in $XDG_DATA_HOME/applications and
 $XDG_DATA_DIRS/*/applications instead of reading stdin.  Entries hidden by
 NoDisplay, Hidden, OnlyShowIn, NotShowIn or a missing TryExec are skipped.
 Return starts the selected application and exits; Shift\-Return prints its
-Exec line to stdout instead.  Terminal applications are run through $TERMINAL
+Exec line to stdout instead.  Exec is split into arguments as the Desktop Entry
+specification describes and run directly, without a shell, so shell syntax such
+as \fB;\fR, \fB$(...)\fR or \fB~\fR has no special meaning (use
+\fBsh \-c '...'\fR when a shell is really needed).  Leading
+\fINAME\fR=\fIvalue\fR words set environment variables.  Terminal applications are run through $TERMINAL
 (default xterm).
 .TP
 .B \-b
