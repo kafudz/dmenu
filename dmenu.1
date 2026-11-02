@@ -3,7 +3,7 @@
 dmenu \- dynamic menu
 .SH SYNOPSIS
 .B dmenu
-.RB [ \-bfiv ]
+.RB [ \-Abfiv ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-m
@@ -40,6 +40,14 @@ is a script used by
 .IR dwm (1)
 which lists programs in the user's $PATH and runs the result in their $SHELL.
 .SH OPTIONS
+.TP
+.B \-A
+dmenu lists the desktop applications found in $XDG_DATA_HOME/applications and
+$XDG_DATA_DIRS/*/applications instead of reading stdin.  Entries hidden by
+NoDisplay, Hidden, OnlyShowIn, NotShowIn or a missing TryExec are skipped.
+Return starts the selected application and exits; Shift\-Return prints its
+Exec line to stdout instead.  Terminal applications are run through $TERMINAL
+(default xterm).
 .TP
 .B \-b
 dmenu appears at the bottom of the screen.

@@ -1,5 +1,7 @@
-dmenu.o
-drw.o
-stest.o
-util.o
+*.o
+dmenu
+stest
+config.h
 build.log
+dmenu-*.tar.gz
+tests/desktop_dump
