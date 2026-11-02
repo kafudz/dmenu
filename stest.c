@@ -71,6 +71,9 @@ main(int argc, char *argv[])
 	case 'n': /* newer than file */
 	case 'o': /* older than file */
 		file = EARGF(usage());
+		/* If the reference file cannot be stat'ed the flag stays
+		 * clear and the time test is skipped; dmenu_path relies on
+		 * this to rebuild a cache that does not exist yet. */
 		if (!(FLAG(ARGC()) = !stat(file, (ARGC() == 'n' ? &new : &old))))
 			perror(file);
 		break;

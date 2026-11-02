@@ -27,7 +27,7 @@
 /* macros */
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
                              * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
-#define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
+#define TEXTW(X)              ((int)drw_fontset_getwidth(drw, (X)) + lrpad) /* signed */
 
 /* enums */
 enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
@@ -197,7 +197,7 @@ drawmenu(void)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
 
-	/* signed arithmetic: avoids unsigned wrap when the prompt is wider than the window */
+	/* TEXTW is signed, so this cannot wrap when the prompt is wider than the window */
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
@@ -378,6 +378,22 @@ movewordedge(int dir)
 	}
 }
 
+/* Start cmd in its own session so it outlives dmenu, which is about to exit. */
+static void
+launch(const char *cmd)
+{
+	pid_t pid = fork();
+
+	if (pid < 0)
+		die("fork:");
+	if (pid == 0) {
+		close(ConnectionNumber(dpy));
+		setsid();
+		execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+		_exit(127);
+	}
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -547,25 +563,18 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
-		/* Desktop mode: Enter launches the selected app. */
-		if (sel && sel->cmd && !(ev->state & ShiftMask)
-		    && !(ev->state & ControlMask)) {
-			pid_t pid = fork();
-			if (pid < 0)
-				die("fork:");
-			if (pid == 0) {
-				close(ConnectionNumber(dpy));
-				setsid();
-				execl("/bin/sh", "sh", "-c", sel->cmd, (char *)NULL);
-				_exit(127);
+		/* Desktop mode: Enter launches the selected app, Shift+Enter
+		 * prints its Exec line instead (useful for scripting). */
+		if (sel && sel->cmd && !(ev->state & ControlMask)) {
+			if (ev->state & ShiftMask) {
+				puts(sel->cmd);
+				if (fflush(stdout) == EOF)
+					die("write error:");
+			} else {
+				launch(sel->cmd);
 			}
 			cleanup();
 			exit(0);
-		}
-		/* Shift+Enter on a desktop entry prints the Exec line (useful
-		 * for scripting); otherwise the original behaviour is kept. */
-		if (sel && sel->cmd && (ev->state & ShiftMask)
-		    && !(ev->state & ControlMask)) {
 		}
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (fflush(stdout) == EOF)
@@ -649,9 +658,7 @@ readstdin(void)
 		}
 		if (len > 0 && line[len - 1] == '\n')
 			line[len - 1] = '\0';
-		if (!(items[i].text = strdup(line)))
-			die("strdup:");
-
+		items[i].text = estrdup(line);
 		items[i].out = 0;
 		items[i].cmd = NULL;
 	}
@@ -660,9 +667,9 @@ readstdin(void)
 	if (ferror(stdin))
 		die("failed to read stdin:");
 	if (items) {
-    		items[i].text = NULL;
-    		items[i].cmd  = NULL;
-}
+		items[i].text = NULL;
+		items[i].cmd  = NULL;
+	}
 	lines = (unsigned int)MIN((size_t)lines, i);
 }
 
@@ -672,22 +679,18 @@ load_desktop(void)
 	DesktopApp **apps = desktop_apps_load();
 	size_t i, count = 0;
 
-	if (apps)
-		while (apps[count])
-			count++;
+	while (apps[count])
+		count++;
 
+	/* ecalloc zeroes everything, including the terminating sentinel */
 	items = ecalloc(count + 1, sizeof *items);
 	for (i = 0; i < count; i++) {
-		items[i].text = strdup(apps[i]->name);
-		if (!items[i].text)
-			die("strdup:");
-		items[i].cmd = strdup(apps[i]->exec);
-		if (!items[i].cmd)
-			die("strdup:");
-		items[i].out = 0;
+		/* take over the strings instead of copying them;
+		 * desktop_apps_free() skips the NULLs left behind */
+		items[i].text = apps[i]->name;
+		items[i].cmd  = apps[i]->exec;
+		apps[i]->name = apps[i]->exec = NULL;
 	}
-	items[count].text = NULL;
-	items[count].cmd  = NULL;
 	lines = (unsigned int)MIN((size_t)lines, count);
 	desktop_apps_free(apps);
 }
@@ -754,8 +757,7 @@ setup(void)
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	lines = MAX(lines, 0);
-	mh = (lines + 1) * bh;
+	mh = ((int)lines + 1) * bh;
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -853,7 +855,7 @@ int
 main(int argc, char *argv[])
 {
 	XWindowAttributes wa;
-	int i, fast = 0, desktop = 0;      /* NEW: desktop */
+	int i, fast = 0, desktop = 0;
 
 	for (i = 1; i < argc; i++)
 		/* these options take no arguments */
@@ -913,7 +915,8 @@ main(int argc, char *argv[])
 	lrpad = drw->fonts->h;
 
 #ifdef __OpenBSD__
-	if (pledge("stdio rpath", NULL) == -1)
+	/* desktop mode also forks and execs the chosen application */
+	if (pledge(desktop ? "stdio rpath proc exec" : "stdio rpath", NULL) == -1)
 		die("pledge");
 #endif
 
