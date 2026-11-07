@@ -50,6 +50,9 @@ static struct item *items = NULL;
 static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
+static int ptrmon = 0;                 /* -P: use the monitor under the pointer */
+static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge */
+static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -792,7 +795,7 @@ setup(void)
 		XGetInputFocus(dpy, &w, &di);
 		if (mon >= 0 && mon < n)
 			i = mon;
-		else if (w != root && w != PointerRoot && w != None) {
+		else if (!ptrmon && w != root && w != PointerRoot && w != None) {
 			/* find top-level window containing current input focus */
 			do {
 				if (XQueryTree(dpy, (pw = w), &dw, &w, &dws, &du) && dws)
@@ -815,9 +818,11 @@ setup(void)
 		if (i >= n)
 			i = 0;
 
-		x = info[i].x_org;
-		y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
-		mw = info[i].width;
+		x = info[i].x_org + MIN(xoff, MAX(info[i].width - 1, 0));
+		y = info[i].y_org + (topbar ? yoff : info[i].height - mh - yoff);
+		mw = info[i].width - (x - info[i].x_org);
+		if (menuw > 0)
+			mw = MIN(mw, (int)menuw);
 		XFree(info);
 	} else
 #endif
@@ -825,9 +830,11 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		x = 0;
-		y = topbar ? 0 : wa.height - mh;
-		mw = wa.width;
+		x = MIN(xoff, MAX(wa.width - 1, 0));
+		y = topbar ? yoff : wa.height - mh - yoff;
+		mw = wa.width - x;
+		if (menuw > 0)
+			mw = MIN(mw, (int)menuw);
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 	inputw = mw / 3; /* input width: ~33% of monitor width */
@@ -869,7 +876,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-Abifv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "usage: dmenu [-AbifPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "             [-x xoffset] [-y yoffset] [-z width]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -892,6 +900,8 @@ main(int argc, char *argv[])
 			fast = 1;
 		else if (!strcmp(argv[i], "-A"))   /* desktop application mode */
 			desktop = 1;
+		else if (!strcmp(argv[i], "-P"))   /* use the monitor under the pointer */
+			ptrmon = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -902,6 +912,12 @@ main(int argc, char *argv[])
 			lines = parsenum(argv[++i], "-l");
 		else if (!strcmp(argv[i], "-m"))   /* monitor index */
 			mon = (int)parsenum(argv[++i], "-m");
+		else if (!strcmp(argv[i], "-x"))   /* horizontal offset from the monitor edge */
+			xoff = (int)parsenum(argv[++i], "-x");
+		else if (!strcmp(argv[i], "-y"))   /* vertical offset from the top/bottom edge */
+			yoff = (int)parsenum(argv[++i], "-y");
+		else if (!strcmp(argv[i], "-z"))   /* menu width in pixels */
+			menuw = parsenum(argv[++i], "-z");
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */

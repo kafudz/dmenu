@@ -3,11 +3,17 @@
 dmenu \- dynamic menu
 .SH SYNOPSIS
 .B dmenu
-.RB [ \-Abfiv ]
+.RB [ \-AbfiPv ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-m
 .IR monitor ]
+.RB [ \-x
+.IR xoffset ]
+.RB [ \-y
+.IR yoffset ]
+.RB [ \-z
+.IR width ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -69,6 +75,24 @@ dmenu lists items vertically, with the given number of lines.
 .BI \-m " monitor"
 dmenu is displayed on the monitor number supplied. Monitor numbers are starting
 from 0.
+.TP
+.B \-P
+dmenu is displayed on the monitor containing the mouse pointer, instead of the
+monitor of the focused window. Ignored if
+.B \-m
+is given.
+.TP
+.BI \-x " xoffset"
+dmenu is placed the given number of pixels from the left edge of its monitor.
+.TP
+.BI \-y " yoffset"
+dmenu is placed the given number of pixels away from the top edge of its
+monitor, or from the bottom edge when
+.B \-b
+is used. This allows the menu to appear next to a bar instead of covering it.
+.TP
+.BI \-z " width"
+dmenu is given the width in pixels, instead of the full width of its monitor.
 .TP
 .BI \-p " prompt"
 defines the prompt to be displayed to the left of the input field.
