@@ -437,6 +437,81 @@ launch(char **argv)
 	}
 }
 
+/* Confirms the current selection, like pressing Enter. state holds the
+ * modifiers: in desktop mode Enter launches the selected app and Shift+Enter
+ * prints its Exec line instead (useful for scripting); otherwise the item (or
+ * the typed text) is printed. With Ctrl the menu stays open and the item is
+ * marked, so several items can be chosen. */
+static void
+accept(unsigned int state)
+{
+	if (sel && sel->cmd && !(state & ControlMask)) {
+		if (state & ShiftMask) {
+			puts(sel->cmd);
+			if (fflush(stdout) == EOF)
+				die("write error:");
+		} else {
+			launch(sel->argv);
+		}
+		cleanup();
+		exit(0);
+	}
+	puts((sel && !(state & ShiftMask)) ? sel->text : text);
+	if (fflush(stdout) == EOF)
+		die("write error:");
+	if (!(state & ControlMask)) {
+		cleanup();
+		exit(0);
+	}
+	if (sel)
+		sel->out = 1;
+}
+
+/* Returns the visible item at the given position in the window, or NULL. This
+ * mirrors the layout used by drawmenu(). */
+static struct item *
+itemat(int px, int py)
+{
+	struct item *item;
+	int x, w, row;
+
+	if (lines > 0) {
+		/* vertical list: row 0 is the input field, the items follow */
+		if (py < bh || px < promptw)
+			return NULL;
+		for (item = curr, row = 1; item != next; item = item->right, row++)
+			if (py < (row + 1) * bh)
+				return item;
+		return NULL;
+	}
+	/* horizontal list: after the prompt, the input field and the "<" */
+	x = promptw + inputw + TEXTW("<");
+	if (py < 0 || py >= bh || !matches || !curr)
+		return NULL;
+	for (item = curr; item != next; item = item->right) {
+		w = (int)textw_clamp(item->text, mw - x - TEXTW(">"));
+		if (px >= x && px < x + w)
+			return item;
+		x += w;
+	}
+	return NULL;
+}
+
+/* Mouse click: the left button chooses the item under the pointer, exactly as
+ * if it had been selected and Enter pressed (Shift and Ctrl work as they do
+ * for Enter). Clicks on anything else are ignored. */
+static void
+click(XButtonEvent *ev)
+{
+	struct item *item = itemat(ev->x, ev->y);
+
+	if (!item)
+		return;
+	sel = item;
+	accept(ev->state & (ShiftMask | ControlMask));
+	drawmenu();
+}
+
 /* Moves the selection one item up (dir < 0) or down (dir > 0), scrolling the
  * list if the selection leaves the visible part of it. */
 static void
@@ -643,28 +718,7 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
-		/* Desktop mode: Enter launches the selected app, Shift+Enter
-		 * prints its Exec line instead (useful for scripting). */
-		if (sel && sel->cmd && !(ev->state & ControlMask)) {
-			if (ev->state & ShiftMask) {
-				puts(sel->cmd);
-				if (fflush(stdout) == EOF)
-					die("write error:");
-			} else {
-				launch(sel->argv);
-			}
-			cleanup();
-			exit(0);
-		}
-		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
-		if (fflush(stdout) == EOF)
-			die("write error:");
-		if (!(ev->state & ControlMask)) {
-			cleanup();
-			exit(0);
-		}
-		if (sel)
-			sel->out = 1;
+		accept(ev->state);
 		break;
 	case XK_Right:
 	case XK_KP_Right:
@@ -802,7 +856,10 @@ run(void)
 			keypress(&ev.xkey);
 			break;
 		case ButtonPress:
-			scroll(&ev.xbutton);
+			if (ev.xbutton.button == Button1)
+				click(&ev.xbutton);
+			else
+				scroll(&ev.xbutton);
 			break;
 		case SelectionNotify:
 			if (ev.xselection.property == utf8)
