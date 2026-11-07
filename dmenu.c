@@ -954,9 +954,12 @@ main(int argc, char *argv[])
 			yoff = (int)parsenum(argv[++i], "-y");
 		else if (!strcmp(argv[i], "-z"))   /* menu width in pixels */
 			menuw = parsenum(argv[++i], "-z");
-		else if (!strcmp(argv[i], "-op"))  /* opacity in percent */
-			opacity = MIN(parsenum(argv[++i], "-op"), 100U);
-		else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
+		else if (!strcmp(argv[i], "-op")) { /* opacity in percent */
+			/* parse once: MIN() would evaluate the ++i expression twice */
+			opacity = parsenum(argv[++i], "-op");
+			if (opacity > 100)
+				opacity = 100;
+		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
 			bw = parsenum(argv[++i], "-bw");
 		else if (!strcmp(argv[i], "-bc"))  /* border color */
 			linecolors[1] = argv[++i];
