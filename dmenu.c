@@ -54,6 +54,7 @@ static int ptrmon = 0;                 /* -P: use the monitor under the pointer 
 static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge */
 static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 static unsigned int bw = 0;            /* -bw: border width in pixels */
+static const int scrollstep = 3;       /* items per mouse wheel notch in a vertical list */
 static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
 static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
 /* -lc, -bc: color of the lines between items and of the border. These live
@@ -436,6 +437,46 @@ launch(char **argv)
 	}
 }
 
+/* Moves the selection one item up (dir < 0) or down (dir > 0), scrolling the
+ * list if the selection leaves the visible part of it. */
+static void
+moveselection(int dir)
+{
+	if (dir < 0) {
+		if (sel && sel->left && (sel = sel->left)->right == curr) {
+			curr = prev;
+			calcoffsets();
+		}
+	} else if (sel && sel->right && (sel = sel->right) == next) {
+		curr = next;
+		calcoffsets();
+	}
+}
+
+/* Mouse wheel: scrolls the list. Buttons 4 and 5 are the vertical wheel, 6
+ * and 7 horizontal scrolling. */
+static void
+scroll(XButtonEvent *ev)
+{
+	int dir, n;
+
+	switch (ev->button) {
+	case Button4:
+	case 6:
+		dir = -1;
+		break;
+	case Button5:
+	case 7:
+		dir = +1;
+		break;
+	default:
+		return;
+	}
+	for (n = lines > 0 ? scrollstep : 1; n > 0; n--)
+		moveselection(dir);
+	drawmenu();
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -584,10 +625,7 @@ insert:
 		/* fallthrough */
 	case XK_Up:
 	case XK_KP_Up:
-		if (sel && sel->left && (sel = sel->left)->right == curr) {
-			curr = prev;
-			calcoffsets();
-		}
+		moveselection(-1);
 		break;
 	case XK_Next:
 	case XK_KP_Next:
@@ -639,10 +677,7 @@ insert:
 		/* fallthrough */
 	case XK_Down:
 	case XK_KP_Down:
-		if (sel && sel->right && (sel = sel->right) == next) {
-			curr = next;
-			calcoffsets();
-		}
+		moveselection(+1);
 		break;
 	case XK_Tab:
 		if (!sel)
@@ -766,6 +801,9 @@ run(void)
 		case KeyPress:
 			keypress(&ev.xkey);
 			break;
+		case ButtonPress:
+			scroll(&ev.xbutton);
+			break;
 		case SelectionNotify:
 			if (ev.xselection.property == utf8)
 				paste();
@@ -867,7 +905,7 @@ setup(void)
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
 	swa.border_pixel = linescheme[ColBg].pixel;
-	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
+	swa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | VisibilityChangeMask;
 	win = XCreateWindow(dpy, root, x, y, mw, mh, bw,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
 	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
