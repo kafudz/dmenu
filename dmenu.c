@@ -55,6 +55,7 @@ static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge 
 static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 static unsigned int bw = 0;            /* -bw: border width in pixels */
 static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
+static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
 /* -lc, -bc: color of the lines between items and of the border. These live
  * here rather than in config.h so that an existing config.h keeps working.
  * A NULL border color means the background color of the selected item. */
@@ -872,6 +873,15 @@ setup(void)
 	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
 	XSetClassHint(dpy, win, &ch);
 
+	/* Opacity is handled by the compositor, which reads this property
+	 * (the same one used by e.g. picom and xcompmgr) when the window is
+	 * mapped. Without a compositor it has no effect. */
+	if (opacity < 100) {
+		unsigned long value = (unsigned long)(0xffffffffUL / 100 * opacity);
+		XChangeProperty(dpy, win, XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False),
+		                XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&value, 1);
+	}
+
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
 		die("XOpenIM failed: could not open input device");
@@ -901,7 +911,7 @@ usage(void)
 	fprintf(stderr,
 	    "usage: dmenu [-AbifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	    "             [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]\n"
-	    "             [-bc color] [-lc color]\n"
+	    "             [-bc color] [-lc color] [-op opacity]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -944,6 +954,8 @@ main(int argc, char *argv[])
 			yoff = (int)parsenum(argv[++i], "-y");
 		else if (!strcmp(argv[i], "-z"))   /* menu width in pixels */
 			menuw = parsenum(argv[++i], "-z");
+		else if (!strcmp(argv[i], "-op"))  /* opacity in percent */
+			opacity = MIN(parsenum(argv[++i], "-op"), 100U);
 		else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
 			bw = parsenum(argv[++i], "-bw");
 		else if (!strcmp(argv[i], "-bc"))  /* border color */

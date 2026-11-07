@@ -20,6 +20,8 @@ dmenu \- dynamic menu
 .IR color ]
 .RB [ \-lc
 .IR color ]
+.RB [ \-op
+.IR opacity ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -98,6 +100,13 @@ included in the width given with
 .BI \-bc " color"
 defines the color of the border. By default it is the background color of the
 selected item.
+.TP
+.BI \-op " opacity"
+defines the opacity of the whole dmenu window in percent, from 0 (invisible) to
+100 (opaque, the default). This requires a compositing manager, such as picom,
+which supports the
+.B _NET_WM_WINDOW_OPACITY
+property; without one the option has no effect.
 .TP
 .B \-P
 dmenu is displayed on the monitor containing the mouse pointer, instead of the
