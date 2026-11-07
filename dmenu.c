@@ -54,7 +54,7 @@ static int ptrmon = 0;                 /* -P: use the monitor under the pointer 
 static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge */
 static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 static unsigned int bw = 0;            /* -bw: border width in pixels */
-static const int scrollstep = 3;       /* items per mouse wheel notch in a vertical list */
+static const int scrollstep = 1;       /* items per mouse wheel notch in a vertical list */
 static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
 static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
 /* -lc, -bc: color of the lines between items and of the border. These live
