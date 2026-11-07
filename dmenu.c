@@ -53,6 +53,13 @@ static int mon = -1, screen;
 static int ptrmon = 0;                 /* -P: use the monitor under the pointer */
 static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge */
 static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
+static unsigned int bw = 0;            /* -bw: border width in pixels */
+static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
+/* -lc, -bc: color of the lines between items and of the border. These live
+ * here rather than in config.h so that an existing config.h keeps working.
+ * A NULL border color means the background color of the selected item. */
+static const char *linecolors[2] = { "#444444", NULL };
+static Clr *linescheme;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -213,6 +220,16 @@ drawmenu(void)
 		/* draw vertical list */
 		for (item = curr; item != next; item = item->right)
 			drawitem(item, x, y += bh, mw - x);
+		if (seplines) {
+			/* a line along the bottom edge of every item but the last one */
+			int ly = 0;
+			drw_setscheme(drw, linescheme);
+			for (item = curr; item != next; item = item->right) {
+				ly += bh;
+				if (item->right != next)
+					drw_rect(drw, x, ly + bh - 1, mw - x, 1, 1, 0);
+			}
+		}
 	} else if (matches && curr) {
 		/* draw horizontal list */
 		x += inputw;
@@ -778,6 +795,9 @@ setup(void)
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
 		scheme[j] = drw_scm_create(drw, colors[j], 2);
+	if (!linecolors[1])
+		linecolors[1] = colors[SchemeSel][ColBg];
+	linescheme = drw_scm_create(drw, linecolors, 2);
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
@@ -819,10 +839,11 @@ setup(void)
 			i = 0;
 
 		x = info[i].x_org + MIN(xoff, MAX(info[i].width - 1, 0));
-		y = info[i].y_org + (topbar ? yoff : info[i].height - mh - yoff);
+		y = info[i].y_org + (topbar ? yoff : info[i].height - mh - 2 * (int)bw - yoff);
 		mw = info[i].width - (x - info[i].x_org);
 		if (menuw > 0)
 			mw = MIN(mw, (int)menuw);
+		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
 		XFree(info);
 	} else
 #endif
@@ -831,10 +852,11 @@ setup(void)
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
 		x = MIN(xoff, MAX(wa.width - 1, 0));
-		y = topbar ? yoff : wa.height - mh - yoff;
+		y = topbar ? yoff : wa.height - mh - 2 * (int)bw - yoff;
 		mw = wa.width - x;
 		if (menuw > 0)
 			mw = MIN(mw, (int)menuw);
+		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 	inputw = mw / 3; /* input width: ~33% of monitor width */
@@ -843,10 +865,11 @@ setup(void)
 	/* create menu window */
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+	swa.border_pixel = linescheme[ColBg].pixel;
 	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
-	win = XCreateWindow(dpy, root, x, y, mw, mh, 0,
+	win = XCreateWindow(dpy, root, x, y, mw, mh, bw,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
-	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
+	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
 	XSetClassHint(dpy, win, &ch);
 
 	/* input methods */
@@ -876,8 +899,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-AbifPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
-	    "             [-x xoffset] [-y yoffset] [-z width]\n"
+	    "usage: dmenu [-AbifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "             [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]\n"
+	    "             [-bc color] [-lc color]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -902,6 +926,8 @@ main(int argc, char *argv[])
 			desktop = 1;
 		else if (!strcmp(argv[i], "-P"))   /* use the monitor under the pointer */
 			ptrmon = 1;
+		else if (!strcmp(argv[i], "-L"))   /* lines between items in a vertical list */
+			seplines = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -918,6 +944,12 @@ main(int argc, char *argv[])
 			yoff = (int)parsenum(argv[++i], "-y");
 		else if (!strcmp(argv[i], "-z"))   /* menu width in pixels */
 			menuw = parsenum(argv[++i], "-z");
+		else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
+			bw = parsenum(argv[++i], "-bw");
+		else if (!strcmp(argv[i], "-bc"))  /* border color */
+			linecolors[1] = argv[++i];
+		else if (!strcmp(argv[i], "-lc"))  /* color of the lines between items */
+			linecolors[0] = argv[++i];
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */

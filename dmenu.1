@@ -3,7 +3,7 @@
 dmenu \- dynamic menu
 .SH SYNOPSIS
 .B dmenu
-.RB [ \-AbfiPv ]
+.RB [ \-AbfiLPv ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-m
@@ -14,6 +14,12 @@ dmenu \- dynamic menu
 .IR yoffset ]
 .RB [ \-z
 .IR width ]
+.RB [ \-bw
+.IR borderwidth ]
+.RB [ \-bc
+.IR color ]
+.RB [ \-lc
+.IR color ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -75,6 +81,23 @@ dmenu lists items vertically, with the given number of lines.
 .BI \-m " monitor"
 dmenu is displayed on the monitor number supplied. Monitor numbers are starting
 from 0.
+.TP
+.B \-L
+dmenu draws a thin line between the items of a vertical list (see
+.BR \-l ).
+.TP
+.BI \-lc " color"
+defines the color of the lines drawn by
+.BR \-L .
+.TP
+.BI \-bw " borderwidth"
+dmenu is drawn with a border of the given width in pixels. The border is
+included in the width given with
+.BR \-z .
+.TP
+.BI \-bc " color"
+defines the color of the border. By default it is the background color of the
+selected item.
 .TP
 .B \-P
 dmenu is displayed on the monitor containing the mouse pointer, instead of the
