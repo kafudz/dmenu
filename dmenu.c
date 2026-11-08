@@ -42,7 +42,7 @@ struct item {
 
 static char text[BUFSIZ] = "";
 static char *embed;
-static int bh, mw, mh;
+static int bh, ih, mw, mh; /* ih: height of one item of a vertical list */
 static int inputw = 0, promptw;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
@@ -55,6 +55,8 @@ static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge 
 static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 static unsigned int bw = 0;            /* -bw: border width in pixels */
 static const int scrollstep = 1;       /* items per mouse wheel notch in a vertical list */
+static unsigned int itempad = 0;       /* -ip: extra height per item of a vertical list */
+static int clickaway = 0;              /* -C: a click outside the menu closes it */
 static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
 static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
 /* -lc, -bc: color of the lines between items and of the border. These live
@@ -130,15 +132,15 @@ calcoffsets(void)
 	int i, n;
 
 	if (lines > 0)
-		n = lines * bh;
+		n = lines * ih;
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
 	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? bh : (int)textw_clamp(next->text, (unsigned int)n)) > n)
+		if ((i += (lines > 0) ? ih : (int)textw_clamp(next->text, (unsigned int)n)) > n)
 			break;
 	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-		if ((i += (lines > 0) ? bh : (int)textw_clamp(prev->left->text, (unsigned int)n)) > n)
+		if ((i += (lines > 0) ? ih : (int)textw_clamp(prev->left->text, (unsigned int)n)) > n)
 			break;
 }
 
@@ -150,6 +152,7 @@ cleanup(void)
 	XUngrabKeyboard(dpy, CurrentTime);
 	for (i = 0; i < SchemeLast; i++)
 		drw_scm_free(drw, scheme[i], 2);
+	drw_scm_free(drw, linescheme, 2);
 	for (i = 0; items && items[i].text; ++i) {
 		free(items[i].text);
 		free(items[i].cmd);
@@ -189,7 +192,7 @@ drawitem(struct item *item, int x, int y, int w)
 	else
 		drw_setscheme(drw, scheme[SchemeNorm]);
 
-	return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0);
+	return drw_text(drw, x, y, w, ih, lrpad / 2, item->text, 0);
 }
 
 static void
@@ -220,17 +223,15 @@ drawmenu(void)
 
 	if (lines > 0) {
 		/* draw vertical list */
-		for (item = curr; item != next; item = item->right)
-			drawitem(item, x, y += bh, mw - x);
+		/* the items follow the input field, which is bh high */
+		for (item = curr, y = bh; item != next; item = item->right, y += ih)
+			drawitem(item, x, y, mw - x);
 		if (seplines) {
 			/* a line along the bottom edge of every item but the last one */
-			int ly = 0;
 			drw_setscheme(drw, linescheme);
-			for (item = curr; item != next; item = item->right) {
-				ly += bh;
+			for (item = curr, y = bh; item != next; item = item->right, y += ih)
 				if (item->right != next)
-					drw_rect(drw, x, ly + bh - 1, mw - x, 1, 1, 0);
-			}
+					drw_rect(drw, x, y + ih - 1, mw - x, 1, 1, 0);
 		}
 	} else if (matches && curr) {
 		/* draw horizontal list */
@@ -269,6 +270,27 @@ grabfocus(void)
 	die("cannot grab focus");
 }
 
+/* With -C, grabs the pointer so that a click anywhere outside the menu is
+ * delivered to us (and closes the menu) instead of to the window under it.
+ * owner_events is set, so clicks on our own window arrive there as usual. The
+ * button that started us may still be held, so retry for a moment. Failing is
+ * not fatal: the menu then just does not close on outside clicks. */
+static void
+grabpointer(void)
+{
+	struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000  };
+	int i;
+
+	for (i = 0; i < 1000; i++) {
+		if (XGrabPointer(dpy, DefaultRootWindow(dpy), True, ButtonPressMask,
+		                 GrabModeAsync, GrabModeAsync, None, None,
+		                 CurrentTime) == GrabSuccess)
+			return;
+		nanosleep(&ts, NULL);
+	}
+	fputs("warning: cannot grab pointer\n", stderr);
+}
+
 static void
 grabkeyboard(void)
 {
@@ -280,8 +302,11 @@ grabkeyboard(void)
 	/* try to grab keyboard, we may have to wait for another process to ungrab */
 	for (i = 0; i < 1000; i++) {
 		if (XGrabKeyboard(dpy, DefaultRootWindow(dpy), True, GrabModeAsync,
-		                  GrabModeAsync, CurrentTime) == GrabSuccess)
+		                  GrabModeAsync, CurrentTime) == GrabSuccess) {
+			if (clickaway)
+				grabpointer();
 			return;
+		}
 		nanosleep(&ts, NULL);
 	}
 	die("cannot grab keyboard");
@@ -479,8 +504,8 @@ itemat(int px, int py)
 		/* vertical list: row 0 is the input field, the items follow */
 		if (py < bh || px < promptw)
 			return NULL;
-		for (item = curr, row = 1; item != next; item = item->right, row++)
-			if (py < (row + 1) * bh)
+		for (item = curr, row = bh; item != next; item = item->right, row += ih)
+			if (py < row + ih)
 				return item;
 		return NULL;
 	}
@@ -856,6 +881,15 @@ run(void)
 			keypress(&ev.xkey);
 			break;
 		case ButtonPress:
+			if (ev.xbutton.window != win) {
+				/* only seen with -C: a click outside the menu (the wheel
+				 * doesn't count) */
+				if (ev.xbutton.button < Button4 || ev.xbutton.button > 7) {
+					cleanup();
+					exit(1);
+				}
+				break;
+			}
 			if (ev.xbutton.button == Button1)
 				click(&ev.xbutton);
 			else
@@ -900,7 +934,8 @@ setup(void)
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	mh = ((int)lines + 1) * bh;
+	ih = lines > 0 ? bh + (int)itempad : bh;
+	mh = bh + (int)lines * ih;
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -1004,9 +1039,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-AbifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "usage: dmenu [-AbCifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	    "             [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]\n"
-	    "             [-bc color] [-lc color] [-op opacity]\n"
+	    "             [-bc color] [-lc color] [-op opacity] [-ip padding]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -1033,6 +1068,8 @@ main(int argc, char *argv[])
 			ptrmon = 1;
 		else if (!strcmp(argv[i], "-L"))   /* lines between items in a vertical list */
 			seplines = 1;
+		else if (!strcmp(argv[i], "-C"))   /* a click outside the menu closes it */
+			clickaway = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -1054,6 +1091,8 @@ main(int argc, char *argv[])
 			opacity = parsenum(argv[++i], "-op");
 			if (opacity > 100)
 				opacity = 100;
+		} else if (!strcmp(argv[i], "-ip")) { /* extra height per item in pixels */
+			itempad = parsenum(argv[++i], "-ip");
 		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
 			bw = parsenum(argv[++i], "-bw");
 		else if (!strcmp(argv[i], "-bc"))  /* border color */

@@ -3,7 +3,7 @@
 dmenu \- dynamic menu
 .SH SYNOPSIS
 .B dmenu
-.RB [ \-AbfiLPv ]
+.RB [ \-AbCfiLPv ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-m
@@ -22,6 +22,8 @@ dmenu \- dynamic menu
 .IR color ]
 .RB [ \-op
 .IR opacity ]
+.RB [ \-ip
+.IR padding ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -83,6 +85,17 @@ dmenu lists items vertically, with the given number of lines.
 .BI \-m " monitor"
 dmenu is displayed on the monitor number supplied. Monitor numbers are starting
 from 0.
+.TP
+.B \-C
+dmenu closes, as if Escape had been pressed, when a mouse button is clicked
+anywhere outside of it. To make this possible dmenu grabs the pointer while it
+is open, so such a click does not reach the window underneath.
+.TP
+.BI \-ip " padding"
+adds the given number of pixels to the height of every item of a vertical list
+(see
+.BR \-l ),
+half of it above and half below the text.
 .TP
 .B \-L
 dmenu draws a thin line between the items of a vertical list (see
