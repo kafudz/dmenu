@@ -34,7 +34,7 @@ Options
 -------
     dmenu [-AbCifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]
           [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]
-          [-bc color] [-lc color] [-op opacity] [-ip padding]
+          [-bc color] [-lc color] [-op opacity] [-ip padding] [-pp padding]
           [-nb color] [-nf color] [-sb color] [-sf color]
           [-ob color] [-of color] [-w windowid]
 
@@ -59,6 +59,9 @@ Layout:
   -b              Show dmenu at the bottom of the screen.
   -l lines        List items vertically, with the given number of lines.
   -L              Draw a thin line between the items of a vertical list.
+  -pp padding     Add this many pixels to the height of the prompt and input
+                  row (half above, half below the text). Items of a horizontal
+                  list share this row and grow with it.
   -ip padding     Add this many pixels to the height of every item of a
                   vertical list (half above, half below the text).
   -m monitor      Show dmenu on this monitor (numbering starts at 0).

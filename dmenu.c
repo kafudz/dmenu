@@ -56,6 +56,7 @@ static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
 static unsigned int bw = 0;            /* -bw: border width in pixels */
 static const int scrollstep = 1;       /* items per mouse wheel notch in a vertical list */
 static unsigned int itempad = 0;       /* -ip: extra height per item of a vertical list */
+static unsigned int promptpad = 0;     /* -pp: extra height of the prompt and input row */
 static int clickaway = 0;              /* -C: a click outside the menu closes it */
 static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
 static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
@@ -90,6 +91,15 @@ parsenum(const char *s, const char *opt)
 	if (errno || end == s || *end || v > INT_MAX)
 		die("invalid argument for %s: '%s'", opt, s);
 	return (unsigned int)v;
+}
+
+/* parse a padding in pixels; capped so that the heights cannot overflow an int */
+static unsigned int
+parsepad(const char *s, const char *opt)
+{
+	unsigned int v = parsenum(s, opt);
+
+	return MIN(v, 1000u);
 }
 
 /* parse a window id (base 0 so 0x... works), dying on bad input */
@@ -218,7 +228,8 @@ drawmenu(void)
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		drw_rect(drw, x + curpos, 2, 2, bh - 4, 1, 0);
+		/* the cursor keeps the height of the text, centered in the row */
+		drw_rect(drw, x + curpos, 2 + (int)promptpad / 2, 2, bh - 4 - (int)promptpad, 1, 0);
 	}
 
 	if (lines > 0) {
@@ -934,7 +945,10 @@ setup(void)
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	ih = lines > 0 ? bh + (int)itempad : bh;
+	/* bh: the prompt and input row, which also holds the items of a
+	 * horizontal list; ih: one item of a vertical list */
+	bh += (int)promptpad;
+	ih = lines > 0 ? bh - (int)promptpad + (int)itempad : bh;
 	mh = bh + (int)lines * ih;
 #ifdef XINERAMA
 	i = 0;
@@ -1042,6 +1056,7 @@ usage(void)
 	    "usage: dmenu [-AbCifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	    "             [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]\n"
 	    "             [-bc color] [-lc color] [-op opacity] [-ip padding]\n"
+	    "             [-pp padding]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -1092,7 +1107,9 @@ main(int argc, char *argv[])
 			if (opacity > 100)
 				opacity = 100;
 		} else if (!strcmp(argv[i], "-ip")) { /* extra height per item in pixels */
-			itempad = parsenum(argv[++i], "-ip");
+			itempad = parsepad(argv[++i], "-ip");
+		} else if (!strcmp(argv[i], "-pp")) { /* extra height of the prompt row in pixels */
+			promptpad = parsepad(argv[++i], "-pp");
 		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
 			bw = parsenum(argv[++i], "-bw");
 		else if (!strcmp(argv[i], "-bc"))  /* border color */

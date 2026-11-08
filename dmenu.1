@@ -24,6 +24,8 @@ dmenu \- dynamic menu
 .IR opacity ]
 .RB [ \-ip
 .IR padding ]
+.RB [ \-pp
+.IR padding ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -90,6 +92,11 @@ from 0.
 dmenu closes, as if Escape had been pressed, when a mouse button is clicked
 anywhere outside of it. To make this possible dmenu grabs the pointer while it
 is open, so such a click does not reach the window underneath.
+.TP
+.BI \-pp " padding"
+adds the given number of pixels to the height of the row that holds the prompt and
+the input field, half of it above and half below the text.  In a horizontal list
+the items share this row and grow with it.
 .TP
 .BI \-ip " padding"
 adds the given number of pixels to the height of every item of a vertical list
