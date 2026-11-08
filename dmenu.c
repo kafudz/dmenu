@@ -42,7 +42,7 @@ struct item {
 
 static char text[BUFSIZ] = "";
 static char *embed;
-static int bh, mw, mh;
+static int bh, ih, mw, mh; /* ih: height of one item of a vertical list */
 static int inputw = 0, promptw;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
@@ -50,6 +50,20 @@ static struct item *items = NULL;
 static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
+static int ptrmon = 0;                 /* -P: use the monitor under the pointer */
+static int xoff = 0, yoff = 0;         /* -x, -y: offsets from the monitor edge */
+static unsigned int menuw = 0;         /* -z: menu width, 0 means full width */
+static unsigned int bw = 0;            /* -bw: border width in pixels */
+static const int scrollstep = 1;       /* items per mouse wheel notch in a vertical list */
+static unsigned int itempad = 0;       /* -ip: extra height per item of a vertical list */
+static int clickaway = 0;              /* -C: a click outside the menu closes it */
+static int seplines = 0;               /* -L: draw lines between the items of a vertical list */
+static unsigned int opacity = 100;     /* -op: window opacity in percent (needs a compositor) */
+/* -lc, -bc: color of the lines between items and of the border. These live
+ * here rather than in config.h so that an existing config.h keeps working.
+ * A NULL border color means the background color of the selected item. */
+static const char *linecolors[2] = { "#444444", NULL };
+static Clr *linescheme;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -118,15 +132,15 @@ calcoffsets(void)
 	int i, n;
 
 	if (lines > 0)
-		n = lines * bh;
+		n = lines * ih;
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
 	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? bh : (int)textw_clamp(next->text, (unsigned int)n)) > n)
+		if ((i += (lines > 0) ? ih : (int)textw_clamp(next->text, (unsigned int)n)) > n)
 			break;
 	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-		if ((i += (lines > 0) ? bh : (int)textw_clamp(prev->left->text, (unsigned int)n)) > n)
+		if ((i += (lines > 0) ? ih : (int)textw_clamp(prev->left->text, (unsigned int)n)) > n)
 			break;
 }
 
@@ -138,6 +152,7 @@ cleanup(void)
 	XUngrabKeyboard(dpy, CurrentTime);
 	for (i = 0; i < SchemeLast; i++)
 		drw_scm_free(drw, scheme[i], 2);
+	drw_scm_free(drw, linescheme, 2);
 	for (i = 0; items && items[i].text; ++i) {
 		free(items[i].text);
 		free(items[i].cmd);
@@ -177,7 +192,7 @@ drawitem(struct item *item, int x, int y, int w)
 	else
 		drw_setscheme(drw, scheme[SchemeNorm]);
 
-	return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0);
+	return drw_text(drw, x, y, w, ih, lrpad / 2, item->text, 0);
 }
 
 static void
@@ -208,8 +223,16 @@ drawmenu(void)
 
 	if (lines > 0) {
 		/* draw vertical list */
-		for (item = curr; item != next; item = item->right)
-			drawitem(item, x, y += bh, mw - x);
+		/* the items follow the input field, which is bh high */
+		for (item = curr, y = bh; item != next; item = item->right, y += ih)
+			drawitem(item, x, y, mw - x);
+		if (seplines) {
+			/* a line along the bottom edge of every item but the last one */
+			drw_setscheme(drw, linescheme);
+			for (item = curr, y = bh; item != next; item = item->right, y += ih)
+				if (item->right != next)
+					drw_rect(drw, x, y + ih - 1, mw - x, 1, 1, 0);
+		}
 	} else if (matches && curr) {
 		/* draw horizontal list */
 		x += inputw;
@@ -247,6 +270,27 @@ grabfocus(void)
 	die("cannot grab focus");
 }
 
+/* With -C, grabs the pointer so that a click anywhere outside the menu is
+ * delivered to us (and closes the menu) instead of to the window under it.
+ * owner_events is set, so clicks on our own window arrive there as usual. The
+ * button that started us may still be held, so retry for a moment. Failing is
+ * not fatal: the menu then just does not close on outside clicks. */
+static void
+grabpointer(void)
+{
+	struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000  };
+	int i;
+
+	for (i = 0; i < 1000; i++) {
+		if (XGrabPointer(dpy, DefaultRootWindow(dpy), True, ButtonPressMask,
+		                 GrabModeAsync, GrabModeAsync, None, None,
+		                 CurrentTime) == GrabSuccess)
+			return;
+		nanosleep(&ts, NULL);
+	}
+	fputs("warning: cannot grab pointer\n", stderr);
+}
+
 static void
 grabkeyboard(void)
 {
@@ -258,8 +302,11 @@ grabkeyboard(void)
 	/* try to grab keyboard, we may have to wait for another process to ungrab */
 	for (i = 0; i < 1000; i++) {
 		if (XGrabKeyboard(dpy, DefaultRootWindow(dpy), True, GrabModeAsync,
-		                  GrabModeAsync, CurrentTime) == GrabSuccess)
+		                  GrabModeAsync, CurrentTime) == GrabSuccess) {
+			if (clickaway)
+				grabpointer();
 			return;
+		}
 		nanosleep(&ts, NULL);
 	}
 	die("cannot grab keyboard");
@@ -415,6 +462,121 @@ launch(char **argv)
 	}
 }
 
+/* Confirms the current selection, like pressing Enter. state holds the
+ * modifiers: in desktop mode Enter launches the selected app and Shift+Enter
+ * prints its Exec line instead (useful for scripting); otherwise the item (or
+ * the typed text) is printed. With Ctrl the menu stays open and the item is
+ * marked, so several items can be chosen. */
+static void
+accept(unsigned int state)
+{
+	if (sel && sel->cmd && !(state & ControlMask)) {
+		if (state & ShiftMask) {
+			puts(sel->cmd);
+			if (fflush(stdout) == EOF)
+				die("write error:");
+		} else {
+			launch(sel->argv);
+		}
+		cleanup();
+		exit(0);
+	}
+	puts((sel && !(state & ShiftMask)) ? sel->text : text);
+	if (fflush(stdout) == EOF)
+		die("write error:");
+	if (!(state & ControlMask)) {
+		cleanup();
+		exit(0);
+	}
+	if (sel)
+		sel->out = 1;
+}
+
+/* Returns the visible item at the given position in the window, or NULL. This
+ * mirrors the layout used by drawmenu(). */
+static struct item *
+itemat(int px, int py)
+{
+	struct item *item;
+	int x, w, row;
+
+	if (lines > 0) {
+		/* vertical list: row 0 is the input field, the items follow */
+		if (py < bh || px < promptw)
+			return NULL;
+		for (item = curr, row = bh; item != next; item = item->right, row += ih)
+			if (py < row + ih)
+				return item;
+		return NULL;
+	}
+	/* horizontal list: after the prompt, the input field and the "<" */
+	x = promptw + inputw + TEXTW("<");
+	if (py < 0 || py >= bh || !matches || !curr)
+		return NULL;
+	for (item = curr; item != next; item = item->right) {
+		w = (int)textw_clamp(item->text, mw - x - TEXTW(">"));
+		if (px >= x && px < x + w)
+			return item;
+		x += w;
+	}
+	return NULL;
+}
+
+/* Mouse click: the left button chooses the item under the pointer, exactly as
+ * if it had been selected and Enter pressed (Shift and Ctrl work as they do
+ * for Enter). Clicks on anything else are ignored. */
+static void
+click(XButtonEvent *ev)
+{
+	struct item *item = itemat(ev->x, ev->y);
+
+	if (!item)
+		return;
+	sel = item;
+	accept(ev->state & (ShiftMask | ControlMask));
+	drawmenu();
+}
+
+/* Moves the selection one item up (dir < 0) or down (dir > 0), scrolling the
+ * list if the selection leaves the visible part of it. */
+static void
+moveselection(int dir)
+{
+	if (dir < 0) {
+		if (sel && sel->left && (sel = sel->left)->right == curr) {
+			curr = prev;
+			calcoffsets();
+		}
+	} else if (sel && sel->right && (sel = sel->right) == next) {
+		curr = next;
+		calcoffsets();
+	}
+}
+
+/* Mouse wheel: scrolls the list. Buttons 4 and 5 are the vertical wheel, 6
+ * and 7 horizontal scrolling. */
+static void
+scroll(XButtonEvent *ev)
+{
+	int dir, n;
+
+	switch (ev->button) {
+	case Button4:
+	case 6:
+		dir = -1;
+		break;
+	case Button5:
+	case 7:
+		dir = +1;
+		break;
+	default:
+		return;
+	}
+	for (n = lines > 0 ? scrollstep : 1; n > 0; n--)
+		moveselection(dir);
+	drawmenu();
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -563,10 +725,7 @@ insert:
 		/* fallthrough */
 	case XK_Up:
 	case XK_KP_Up:
-		if (sel && sel->left && (sel = sel->left)->right == curr) {
-			curr = prev;
-			calcoffsets();
-		}
+		moveselection(-1);
 		break;
 	case XK_Next:
 	case XK_KP_Next:
@@ -584,28 +743,7 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
-		/* Desktop mode: Enter launches the selected app, Shift+Enter
-		 * prints its Exec line instead (useful for scripting). */
-		if (sel && sel->cmd && !(ev->state & ControlMask)) {
-			if (ev->state & ShiftMask) {
-				puts(sel->cmd);
-				if (fflush(stdout) == EOF)
-					die("write error:");
-			} else {
-				launch(sel->argv);
-			}
-			cleanup();
-			exit(0);
-		}
-		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
-		if (fflush(stdout) == EOF)
-			die("write error:");
-		if (!(ev->state & ControlMask)) {
-			cleanup();
-			exit(0);
-		}
-		if (sel)
-			sel->out = 1;
+		accept(ev->state);
 		break;
 	case XK_Right:
 	case XK_KP_Right:
@@ -618,10 +756,7 @@ insert:
 		/* fallthrough */
 	case XK_Down:
 	case XK_KP_Down:
-		if (sel && sel->right && (sel = sel->right) == next) {
-			curr = next;
-			calcoffsets();
-		}
+		moveselection(+1);
 		break;
 	case XK_Tab:
 		if (!sel)
@@ -745,6 +880,21 @@ run(void)
 		case KeyPress:
 			keypress(&ev.xkey);
 			break;
+		case ButtonPress:
+			if (ev.xbutton.window != win) {
+				/* only seen with -C: a click outside the menu (the wheel
+				 * doesn't count) */
+				if (ev.xbutton.button < Button4 || ev.xbutton.button > 7) {
+					cleanup();
+					exit(1);
+				}
+				break;
+			}
+			if (ev.xbutton.button == Button1)
+				click(&ev.xbutton);
+			else
+				scroll(&ev.xbutton);
+			break;
 		case SelectionNotify:
 			if (ev.xselection.property == utf8)
 				paste();
@@ -775,13 +925,17 @@ setup(void)
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
 		scheme[j] = drw_scm_create(drw, colors[j], 2);
+	if (!linecolors[1])
+		linecolors[1] = colors[SchemeSel][ColBg];
+	linescheme = drw_scm_create(drw, linecolors, 2);
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
 
 	/* calculate menu geometry */
 	bh = drw->fonts->h + 2;
-	mh = ((int)lines + 1) * bh;
+	ih = lines > 0 ? bh + (int)itempad : bh;
+	mh = bh + (int)lines * ih;
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -792,7 +946,7 @@ setup(void)
 		XGetInputFocus(dpy, &w, &di);
 		if (mon >= 0 && mon < n)
 			i = mon;
-		else if (w != root && w != PointerRoot && w != None) {
+		else if (!ptrmon && w != root && w != PointerRoot && w != None) {
 			/* find top-level window containing current input focus */
 			do {
 				if (XQueryTree(dpy, (pw = w), &dw, &w, &dws, &du) && dws)
@@ -815,9 +969,12 @@ setup(void)
 		if (i >= n)
 			i = 0;
 
-		x = info[i].x_org;
-		y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
-		mw = info[i].width;
+		x = info[i].x_org + MIN(xoff, MAX(info[i].width - 1, 0));
+		y = info[i].y_org + (topbar ? yoff : info[i].height - mh - 2 * (int)bw - yoff);
+		mw = info[i].width - (x - info[i].x_org);
+		if (menuw > 0)
+			mw = MIN(mw, (int)menuw);
+		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
 		XFree(info);
 	} else
 #endif
@@ -825,9 +982,12 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		x = 0;
-		y = topbar ? 0 : wa.height - mh;
-		mw = wa.width;
+		x = MIN(xoff, MAX(wa.width - 1, 0));
+		y = topbar ? yoff : wa.height - mh - 2 * (int)bw - yoff;
+		mw = wa.width - x;
+		if (menuw > 0)
+			mw = MIN(mw, (int)menuw);
+		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 	inputw = mw / 3; /* input width: ~33% of monitor width */
@@ -836,11 +996,21 @@ setup(void)
 	/* create menu window */
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
-	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
-	win = XCreateWindow(dpy, root, x, y, mw, mh, 0,
+	swa.border_pixel = linescheme[ColBg].pixel;
+	swa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | VisibilityChangeMask;
+	win = XCreateWindow(dpy, root, x, y, mw, mh, bw,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
-	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
+	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
 	XSetClassHint(dpy, win, &ch);
+
+	/* Opacity is handled by the compositor, which reads this property
+	 * (the same one used by e.g. picom and xcompmgr) when the window is
+	 * mapped. Without a compositor it has no effect. */
+	if (opacity < 100) {
+		unsigned long value = (unsigned long)(0xffffffffUL / 100 * opacity);
+		XChangeProperty(dpy, win, XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False),
+		                XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&value, 1);
+	}
 
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
@@ -869,7 +1039,9 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: dmenu [-Abifv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "usage: dmenu [-AbCifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "             [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]\n"
+	    "             [-bc color] [-lc color] [-op opacity] [-ip padding]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color]\n"
 	    "             [-ob color] [-of color] [-w windowid]\n");
 	exit(2);
@@ -892,6 +1064,12 @@ main(int argc, char *argv[])
 			fast = 1;
 		else if (!strcmp(argv[i], "-A"))   /* desktop application mode */
 			desktop = 1;
+		else if (!strcmp(argv[i], "-P"))   /* use the monitor under the pointer */
+			ptrmon = 1;
+		else if (!strcmp(argv[i], "-L"))   /* lines between items in a vertical list */
+			seplines = 1;
+		else if (!strcmp(argv[i], "-C"))   /* a click outside the menu closes it */
+			clickaway = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -902,6 +1080,25 @@ main(int argc, char *argv[])
 			lines = parsenum(argv[++i], "-l");
 		else if (!strcmp(argv[i], "-m"))   /* monitor index */
 			mon = (int)parsenum(argv[++i], "-m");
+		else if (!strcmp(argv[i], "-x"))   /* horizontal offset from the monitor edge */
+			xoff = (int)parsenum(argv[++i], "-x");
+		else if (!strcmp(argv[i], "-y"))   /* vertical offset from the top/bottom edge */
+			yoff = (int)parsenum(argv[++i], "-y");
+		else if (!strcmp(argv[i], "-z"))   /* menu width in pixels */
+			menuw = parsenum(argv[++i], "-z");
+		else if (!strcmp(argv[i], "-op")) { /* opacity in percent */
+			/* parse once: MIN() would evaluate the ++i expression twice */
+			opacity = parsenum(argv[++i], "-op");
+			if (opacity > 100)
+				opacity = 100;
+		} else if (!strcmp(argv[i], "-ip")) { /* extra height per item in pixels */
+			itempad = parsenum(argv[++i], "-ip");
+		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
+			bw = parsenum(argv[++i], "-bw");
+		else if (!strcmp(argv[i], "-bc"))  /* border color */
+			linecolors[1] = argv[++i];
+		else if (!strcmp(argv[i], "-lc"))  /* color of the lines between items */
+			linecolors[0] = argv[++i];
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */

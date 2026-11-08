@@ -3,11 +3,27 @@
 dmenu \- dynamic menu
 .SH SYNOPSIS
 .B dmenu
-.RB [ \-Abfiv ]
+.RB [ \-AbCfiLPv ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-m
 .IR monitor ]
+.RB [ \-x
+.IR xoffset ]
+.RB [ \-y
+.IR yoffset ]
+.RB [ \-z
+.IR width ]
+.RB [ \-bw
+.IR borderwidth ]
+.RB [ \-bc
+.IR color ]
+.RB [ \-lc
+.IR color ]
+.RB [ \-op
+.IR opacity ]
+.RB [ \-ip
+.IR padding ]
 .RB [ \-p
 .IR prompt ]
 .RB [ \-fn
@@ -69,6 +85,59 @@ dmenu lists items vertically, with the given number of lines.
 .BI \-m " monitor"
 dmenu is displayed on the monitor number supplied. Monitor numbers are starting
 from 0.
+.TP
+.B \-C
+dmenu closes, as if Escape had been pressed, when a mouse button is clicked
+anywhere outside of it. To make this possible dmenu grabs the pointer while it
+is open, so such a click does not reach the window underneath.
+.TP
+.BI \-ip " padding"
+adds the given number of pixels to the height of every item of a vertical list
+(see
+.BR \-l ),
+half of it above and half below the text.
+.TP
+.B \-L
+dmenu draws a thin line between the items of a vertical list (see
+.BR \-l ).
+.TP
+.BI \-lc " color"
+defines the color of the lines drawn by
+.BR \-L .
+.TP
+.BI \-bw " borderwidth"
+dmenu is drawn with a border of the given width in pixels. The border is
+included in the width given with
+.BR \-z .
+.TP
+.BI \-bc " color"
+defines the color of the border. By default it is the background color of the
+selected item.
+.TP
+.BI \-op " opacity"
+defines the opacity of the whole dmenu window in percent, from 0 (invisible) to
+100 (opaque, the default). This requires a compositing manager, such as picom,
+which supports the
+.B _NET_WM_WINDOW_OPACITY
+property; without one the option has no effect.
+.TP
+.B \-P
+dmenu is displayed on the monitor containing the mouse pointer, instead of the
+monitor of the focused window. Ignored if
+.B \-m
+is given.
+.TP
+.BI \-x " xoffset"
+dmenu is placed the given number of pixels from the left edge of its monitor.
+.TP
+.BI \-y " yoffset"
+dmenu is placed the given number of pixels away from the top edge of its
+monitor, or from the bottom edge when
+.B \-b
+is used. This allows the menu to appear next to a bar instead of covering it.
+.TP
+.BI \-z " width"
+dmenu is given the width in pixels, instead of the full width of its monitor.
 .TP
 .BI \-p " prompt"
 defines the prompt to be displayed to the left of the input field.
@@ -211,6 +280,17 @@ Page up
 .TP
 .B M\-l
 Down
+.SS Mouse
+.TP
+.B Left click
+Chooses the item under the pointer, as if it had been selected and Enter had
+been pressed. Shift and Ctrl work as they do with Enter.
+.TP
+.B Scroll wheel
+Moves the selection up or down by one item per step in a vertical list (see
+.BR \-l ).
+In the horizontal list the wheel and horizontal scrolling move the selection
+left and right, also one item per step.
 .SH SEE ALSO
 .IR dwm (1),
 .IR stest (1)
