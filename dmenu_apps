@@ -1,2 +1,2 @@
 #!/bin/sh
-exec dmenu -A -i -p 'RUN : ' -fn 'VictorMono Nerd Font' "$@"
+exec dmenu -A -i -z 400 -x 760 -y 200 -bw 1 -op 90 -l 10 -ip 30 -L -pp 30 -fn 'VictorMono Nerd Font' "$@"
