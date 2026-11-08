@@ -21,4 +21,67 @@ Afterwards enter the following command to build and install dmenu
 
 Running dmenu
 -------------
-See the man page for details.
+dmenu reads a list of items from stdin, shows them as a menu and prints the
+chosen item to stdout:
+
+    ls | dmenu -i -l 10 -p "open:"
+
+With -A it lists the installed desktop applications instead and launches the
+one you choose. See the man page (man dmenu) for the full details.
+
+
+Options
+-------
+    dmenu [-AbCifLPv] [-l lines] [-p prompt] [-fn font] [-m monitor]
+          [-x xoffset] [-y yoffset] [-z width] [-bw borderwidth]
+          [-bc color] [-lc color] [-op opacity] [-ip padding]
+          [-nb color] [-nf color] [-sb color] [-sf color]
+          [-ob color] [-of color] [-w windowid]
+
+Behaviour:
+
+  -A              List the desktop applications from $XDG_DATA_HOME/applications
+                  and $XDG_DATA_DIRS/*/applications instead of reading stdin.
+                  Return launches the selected application and exits;
+                  Shift-Return prints its command line instead. Exec= is
+                  split into arguments and run directly, without a shell.
+                  Terminal apps are run through $TERMINAL (default xterm).
+  -C              Close dmenu, like Escape, when a mouse button is clicked
+                  outside of it (dmenu grabs the pointer while open).
+  -f              Grab the keyboard before reading stdin if stdin is not a
+                  tty. Faster, but locks up X until stdin reaches EOF.
+  -i              Match menu items case insensitively.
+  -v              Print version information and exit.
+  -w windowid     Embed dmenu into the window with the given id.
+
+Layout:
+
+  -b              Show dmenu at the bottom of the screen.
+  -l lines        List items vertically, with the given number of lines.
+  -L              Draw a thin line between the items of a vertical list.
+  -ip padding     Add this many pixels to the height of every item of a
+                  vertical list (half above, half below the text).
+  -m monitor      Show dmenu on this monitor (numbering starts at 0).
+  -P              Show dmenu on the monitor under the mouse pointer instead of
+                  the focused window's monitor. Ignored if -m is given.
+  -x xoffset      Distance in pixels from the left edge of the monitor.
+  -y yoffset      Distance in pixels from the top edge of the monitor (from the
+                  bottom edge with -b), e.g. to place dmenu next to a bar.
+  -z width        Width in pixels instead of the full monitor width.
+  -bw borderwidth Draw a border of this width in pixels (included in -z).
+  -op opacity     Window opacity in percent, 0 to 100 (default 100). Needs a
+                  compositor that supports _NET_WM_WINDOW_OPACITY, such as
+                  picom.
+
+Text and colors (#RGB, #RRGGBB and X color names are accepted):
+
+  -p prompt       Prompt shown to the left of the input field.
+  -fn font        Font or font set to use.
+  -nb color       Normal background.
+  -nf color       Normal foreground.
+  -sb color       Selected background.
+  -sf color       Selected foreground.
+  -ob color       Outline background (multiple selection).
+  -of color       Outline foreground (multiple selection).
+  -bc color       Border color (default: the selected background).
+  -lc color       Color of the lines drawn by -L.
