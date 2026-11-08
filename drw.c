@@ -51,13 +51,21 @@ drw_create(Display *dpy, int screen, Window root, unsigned int w, unsigned int h
 {
 	Drw *drw = ecalloc(1, sizeof(Drw));
 
+	/* a zero-sized pixmap is a protocol error; callers can pass a
+	 * transiently empty window before it gets its real size */
+	w = MAX(w, 1);
+	h = MAX(h, 1);
 	drw->dpy = dpy;
 	drw->screen = screen;
 	drw->root = root;
 	drw->w = w;
 	drw->h = h;
 	drw->drawable = XCreatePixmap(dpy, root, w, h, DefaultDepth(dpy, screen));
+	if (!drw->drawable)
+		die("cannot create pixmap");
 	drw->gc = XCreateGC(dpy, root, 0, NULL);
+	if (!drw->gc)
+		die("cannot create graphics context");
 	XSetLineAttributes(dpy, drw->gc, 1, LineSolid, CapButt, JoinMiter);
 
 	return drw;
@@ -69,18 +77,26 @@ drw_resize(Drw *drw, unsigned int w, unsigned int h)
 	if (!drw)
 		return;
 
+	w = MAX(w, 1);
+	h = MAX(h, 1);
 	drw->w = w;
 	drw->h = h;
 	if (drw->drawable)
 		XFreePixmap(drw->dpy, drw->drawable);
 	drw->drawable = XCreatePixmap(drw->dpy, drw->root, w, h, DefaultDepth(drw->dpy, drw->screen));
+	if (!drw->drawable)
+		die("cannot create pixmap");
 }
 
 void
 drw_free(Drw *drw)
 {
-	XFreePixmap(drw->dpy, drw->drawable);
-	XFreeGC(drw->dpy, drw->gc);
+	if (!drw)
+		return;
+	if (drw->drawable)
+		XFreePixmap(drw->dpy, drw->drawable);
+	if (drw->gc)
+		XFreeGC(drw->dpy, drw->gc);
 	drw_fontset_free(drw->fonts);
 	free(drw);
 }
@@ -228,7 +244,7 @@ drw_setscheme(Drw *drw, Clr *scm)
 void
 drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert)
 {
-	if (!drw || !drw->scheme)
+	if (!drw || !drw->scheme || !w || !h)
 		return;
 	XSetForeground(drw->dpy, drw->gc, invert ? drw->scheme[ColBg].pixel : drw->scheme[ColFg].pixel);
 	if (filled)
@@ -390,11 +406,19 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 			x += ew;
 			w -= ew;
 		}
-		if (utf8err && (!render || invalid_width < w)) {
-			if (render)
+		if (utf8err) {
+			/* Drawing the replacement glyph is optional when there is
+			 * no room left, but advancing the counters is not: never
+			 * subtract more pixels than remain or they wrap around. */
+			unsigned int iw = invalid_width;
+
+			if (render && iw && iw < w)
 				drw_text(drw, x, y, w, h, 0, invalid, invert);
-			x += invalid_width;
-			w -= invalid_width;
+			else if (render)
+				iw = 0; /* no room (or no width) to draw it */
+			iw = MIN(iw, w);
+			x += (int)iw;
+			w -= iw;
 		}
 		if (render && overflow)
 			drw_text(drw, ellipsis_x, y, ellipsis_w, h, 0, "...", invert);
@@ -421,7 +445,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 void
 drw_map(Drw *drw, Window win, int x, int y, unsigned int w, unsigned int h)
 {
-	if (!drw)
+	if (!drw || !w || !h)
 		return;
 
 	XCopyArea(drw->dpy, drw->drawable, win, drw->gc, x, y, w, h, x, y);

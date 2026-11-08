@@ -26,8 +26,9 @@ tests/desktop_dump: tests/desktop_dump.c desktop.c util.c desktop.h util.h confi
 	$(CC) $(CFLAGS) -o $@ tests/desktop_dump.c desktop.c util.c
 
 # parser tests; need no X server and no X libraries
-test: tests/desktop_dump
+test: tests/desktop_dump stest
 	sh tests/desktop_test.sh tests/desktop_dump
+	sh tests/stest_test.sh ./stest
 
 clean:
 	rm -f dmenu stest tests/desktop_dump $(OBJ) dmenu-$(VERSION).tar.gz

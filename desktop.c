@@ -155,14 +155,16 @@ parse_bool(const char *v)
 	return !strcmp(v, "true") || !strcmp(v, "1");
 }
 
-/* keys of [Desktop Entry] we care about, and where they are stored */
-static const struct { const char *key; size_t off; } strkeys[] = {
-	{ "Name",       offsetof(struct entry, name)         },
-	{ "Exec",       offsetof(struct entry, exec)         },
-	{ "Icon",       offsetof(struct entry, icon)         },
-	{ "TryExec",    offsetof(struct entry, try_exec)     },
-	{ "OnlyShowIn", offsetof(struct entry, only_show_in) },
-	{ "NotShowIn",  offsetof(struct entry, not_show_in)  },
+/* keys of [Desktop Entry] we care about, and where they are stored. Values of
+ * the list keys are kept escaped: \; must stay distinguishable from the ;
+ * that separates the list items. */
+static const struct { const char *key; size_t off; int list; } strkeys[] = {
+	{ "Name",       offsetof(struct entry, name),         0 },
+	{ "Exec",       offsetof(struct entry, exec),         0 },
+	{ "Icon",       offsetof(struct entry, icon),         0 },
+	{ "TryExec",    offsetof(struct entry, try_exec),     0 },
+	{ "OnlyShowIn", offsetof(struct entry, only_show_in), 1 },
+	{ "NotShowIn",  offsetof(struct entry, not_show_in),  1 },
 };
 static const struct { const char *key; size_t off; } boolkeys[] = {
 	{ "NoDisplay",  offsetof(struct entry, no_display)   },
@@ -180,7 +182,7 @@ set_field(struct entry *e, const char *key, const char *val)
 			char **dst = (char **)((char *)e + strkeys[i].off);
 
 			free(*dst);
-			*dst = unescape(val);
+			*dst = strkeys[i].list ? estrdup(val) : unescape(val);
 			return;
 		}
 	for (i = 0; i < LENGTH(boolkeys); i++)
@@ -231,10 +233,11 @@ parse_desktop_file(const char *path, struct entry *e)
 		char *s, *eq;
 
 		/* the file may have grown since fstat(): enforce the cap again */
-		if ((total += (size_t)n) > MAX_DESKTOP_SIZE) {
+		if ((size_t)n > MAX_DESKTOP_SIZE - total) {
 			type_ok = 0;
 			break;
 		}
+		total += (size_t)n;
 		s = trim(line);
 
 		if (!*s || *s == '#')
@@ -463,18 +466,42 @@ wrap_in_terminal(char **argv)
 
 /* ---- XDG filtering ------------------------------------------------- */
 
-/* Is tok[0..len) one of the items of the `sep`-separated list? */
+/*
+ * Is tok[0..len) one of the items of the `sep`-separated list? The list was
+ * kept escaped, so decode it while comparing: \; is a literal semicolon, not
+ * a separator, and \\ is a backslash (as are the other string escapes).
+ */
 static int
 list_has(const char *list, char sep, const char *tok, size_t len)
 {
-	const char set[2] = { sep, '\0' };
-
 	while (*list) {
-		size_t n = strcspn(list, set);
+		size_t matched = 0;
+		int equal = 1;
 
-		if (n == len && !strncmp(list, tok, len))
+		while (*list && *list != sep) {
+			char c;
+
+			if (*list == '\\' && list[1]) {
+				switch (list[1]) {
+				case 's':  c = ' ';  break;
+				case 'n':  c = '\n'; break;
+				case 't':  c = '\t'; break;
+				case 'r':  c = '\r'; break;
+				case '\\': c = '\\'; break;
+				default:   c = list[1]; break; /* includes \; */
+				}
+				list += 2;
+			} else {
+				c = *list++;
+			}
+			if (matched >= len || tok[matched] != c)
+				equal = 0;
+			matched++;
+		}
+		if (equal && matched == len)
 			return 1;
-		list += n + (list[n] != '\0');
+		if (*list == sep)
+			list++;
 	}
 	return 0;
 }

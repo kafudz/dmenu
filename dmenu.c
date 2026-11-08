@@ -28,6 +28,8 @@
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
                              * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
 #define TEXTW(X)              ((int)drw_fontset_getwidth(drw, (X)) + lrpad) /* signed */
+#define MAX_PADDING           1000u /* keeps derived pixel sizes far from overflow */
+#define MAX_BORDER            1000u
 
 /* enums */
 enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
@@ -99,7 +101,7 @@ parsepad(const char *s, const char *opt)
 {
 	unsigned int v = parsenum(s, opt);
 
-	return MIN(v, 1000u);
+	return MIN(v, MAX_PADDING);
 }
 
 /* parse a window id (base 0 so 0x... works), dying on bad input */
@@ -116,11 +118,20 @@ parsewinid(const char *s)
 	return (Window)v;
 }
 
+/*
+ * Width of str, limited to n pixels. n is signed because callers subtract
+ * several widgets from the window width; a negative result means there is no
+ * room left and must not be converted to a huge unsigned value.
+ */
 static unsigned int
-textw_clamp(const char *str, unsigned int n)
+textw_clamp(const char *str, int n)
 {
-	unsigned int w = drw_fontset_getwidth_clamp(drw, str, n) + lrpad;
-	return MIN(w, n);
+	unsigned int w;
+
+	if (n <= 0)
+		return 0;
+	w = drw_fontset_getwidth_clamp(drw, str, (unsigned int)n) + (unsigned int)lrpad;
+	return MIN(w, (unsigned int)n);
 }
 
 static void
@@ -139,19 +150,32 @@ appenditem(struct item *item, struct item **list, struct item **last)
 static void
 calcoffsets(void)
 {
-	int i, n;
+	int i, n, step;
 
-	if (lines > 0)
-		n = lines * ih;
-	else
+	if (lines > 0) {
+		/* ih is positive; avoid the signed overflow of lines * ih */
+		if (lines > (unsigned int)INT_MAX / (unsigned int)ih)
+			n = INT_MAX;
+		else
+			n = (int)(lines * (unsigned int)ih);
+	} else {
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
-	/* calculate which items will begin the next page and previous page */
-	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? ih : (int)textw_clamp(next->text, (unsigned int)n)) > n)
+		n = MAX(n, 1); /* always offer at least a pixel to the first item */
+	}
+	/* calculate which items will begin the next page and previous page.
+	 * Compare before adding so that i cannot overflow. */
+	for (i = 0, next = curr; next; next = next->right) {
+		step = (lines > 0) ? ih : (int)textw_clamp(next->text, n);
+		if (step > n - i)
 			break;
-	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-		if ((i += (lines > 0) ? ih : (int)textw_clamp(prev->left->text, (unsigned int)n)) > n)
+		i += step;
+	}
+	for (i = 0, prev = curr; prev && prev->left; prev = prev->left) {
+		step = (lines > 0) ? ih : (int)textw_clamp(prev->left->text, n);
+		if (step > n - i)
 			break;
+		i += step;
+	}
 }
 
 static void
@@ -160,6 +184,7 @@ cleanup(void)
 	size_t i;
 
 	XUngrabKeyboard(dpy, CurrentTime);
+	XUngrabPointer(dpy, CurrentTime);
 	for (i = 0; i < SchemeLast; i++)
 		drw_scm_free(drw, scheme[i], 2);
 	drw_scm_free(drw, linescheme, 2);
@@ -195,6 +220,8 @@ cistrstr(const char *h, const char *n)
 static int
 drawitem(struct item *item, int x, int y, int w)
 {
+	if (w <= 0)
+		return x;
 	if (item == sel)
 		drw_setscheme(drw, scheme[SchemeSel]);
 	else if (item->out)
@@ -208,7 +235,7 @@ drawitem(struct item *item, int x, int y, int w)
 static void
 drawmenu(void)
 {
-	int curpos;
+	int curpos, h, itemw;
 	struct item *item;
 	int x = 0, y = 0, w;
 
@@ -220,45 +247,53 @@ drawmenu(void)
 		x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0);
 	}
 	/* draw input field */
-	w = (lines > 0 || !matches) ? mw - x : inputw;
+	w = (lines > 0 || !matches) ? MAX(mw - x, 0) : inputw;
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
 
 	/* TEXTW is signed, so this cannot wrap when the prompt is wider than the window */
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
-	if ((curpos += lrpad / 2 - 1) < w) {
+	curpos += lrpad / 2 - 1;
+	h = bh - 4 - (int)promptpad;
+	if (h > 0 && curpos >= 0 && curpos < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		/* the cursor keeps the height of the text, centered in the row */
-		drw_rect(drw, x + curpos, 2 + (int)promptpad / 2, 2, bh - 4 - (int)promptpad, 1, 0);
+		drw_rect(drw, x + curpos, 2 + (int)promptpad / 2, 2, (unsigned int)h, 1, 0);
 	}
 
 	if (lines > 0) {
 		/* draw vertical list */
 		/* the items follow the input field, which is bh high */
+		itemw = MAX(mw - x, 0);
 		for (item = curr, y = bh; item != next; item = item->right, y += ih)
-			drawitem(item, x, y, mw - x);
-		if (seplines) {
+			drawitem(item, x, y, itemw);
+		if (seplines && itemw > 0) {
 			/* a line along the bottom edge of every item but the last one */
 			drw_setscheme(drw, linescheme);
 			for (item = curr, y = bh; item != next; item = item->right, y += ih)
 				if (item->right != next)
-					drw_rect(drw, x, y + ih - 1, mw - x, 1, 1, 0);
+					drw_rect(drw, x, y + ih - 1, (unsigned int)itemw, 1, 1, 0);
 		}
 	} else if (matches && curr) {
 		/* draw horizontal list */
 		x += inputw;
 		w = TEXTW("<");
-		if (curr->left) {
+		if (curr->left && x < mw) {
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, "<", 0);
+			drw_text(drw, x, 0, (unsigned int)MIN(w, mw - x), bh, lrpad / 2, "<", 0);
 		}
 		x += w;
-		for (item = curr; item != next; item = item->right)
-			x = drawitem(item, x, 0, textw_clamp(item->text, mw - x - TEXTW(">")));
-		if (next) {
-			w = TEXTW(">");
+		for (item = curr; item != next; item = item->right) {
+			int n = mw - x - TEXTW(">");
+
+			if (n <= 0)
+				break;
+			x = drawitem(item, x, 0, (int)textw_clamp(item->text, n));
+		}
+		if (next && mw > 0) {
+			w = MIN(TEXTW(">"), mw);
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, mw - w, 0, w, bh, lrpad / 2, ">", 0);
+			drw_text(drw, mw - w, 0, (unsigned int)w, bh, lrpad / 2, ">", 0);
 		}
 	}
 	drw_map(drw, win, 0, 0, mw, mh);
@@ -308,19 +343,20 @@ grabkeyboard(void)
 	struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000  };
 	int i;
 
-	if (embed)
-		return;
-	/* try to grab keyboard, we may have to wait for another process to ungrab */
-	for (i = 0; i < 1000; i++) {
-		if (XGrabKeyboard(dpy, DefaultRootWindow(dpy), True, GrabModeAsync,
-		                  GrabModeAsync, CurrentTime) == GrabSuccess) {
-			if (clickaway)
-				grabpointer();
-			return;
+	/* an embedded dmenu gets the keyboard from its parent window */
+	if (!embed) {
+		/* try to grab keyboard, we may have to wait for another process to ungrab */
+		for (i = 0; i < 1000; i++) {
+			if (XGrabKeyboard(dpy, DefaultRootWindow(dpy), True, GrabModeAsync,
+			                  GrabModeAsync, CurrentTime) == GrabSuccess)
+				break;
+			nanosleep(&ts, NULL);
 		}
-		nanosleep(&ts, NULL);
+		if (i == 1000)
+			die("cannot grab keyboard");
 	}
-	die("cannot grab keyboard");
+	if (clickaway)
+		grabpointer();
 }
 
 static void
@@ -509,11 +545,11 @@ static struct item *
 itemat(int px, int py)
 {
 	struct item *item;
-	int x, w, row;
+	int x, w, n, row;
 
 	if (lines > 0) {
 		/* vertical list: row 0 is the input field, the items follow */
-		if (py < bh || px < promptw)
+		if (py < bh || px < promptw || px >= mw)
 			return NULL;
 		for (item = curr, row = bh; item != next; item = item->right, row += ih)
 			if (py < row + ih)
@@ -525,7 +561,10 @@ itemat(int px, int py)
 	if (py < 0 || py >= bh || !matches || !curr)
 		return NULL;
 	for (item = curr; item != next; item = item->right) {
-		w = (int)textw_clamp(item->text, mw - x - TEXTW(">"));
+		n = mw - x - TEXTW(">");
+		if (n <= 0)
+			return NULL;
+		w = (int)textw_clamp(item->text, n);
 		if (px >= x && px < x + w)
 			return item;
 		x += w;
@@ -918,10 +957,28 @@ run(void)
 	}
 }
 
+/* Shorten a vertical list so the menu, including its border, fits in avail
+ * pixels. The row heights are fixed, so the only alternative is to show fewer
+ * lines. This also keeps mh and the item-loop counters far from overflowing. */
+static void
+fit_menu(int avail)
+{
+	int border = 2 * (int)bw;
+	int usable = avail > border ? avail - border : 1;
+	unsigned int maxlines;
+
+	if (lines > 0) {
+		maxlines = usable > bh ? (unsigned int)((usable - bh) / ih) : 0;
+		if (lines > maxlines)
+			lines = maxlines;
+	}
+	mh = bh + (int)lines * ih;
+}
+
 static void
 setup(void)
 {
-	int x, y, i, j;
+	int availh = 0, availw = 0, x, y, x_org = 0, y_org = 0, i, j;
 	unsigned int du;
 	XSetWindowAttributes swa;
 	XIM xim;
@@ -949,7 +1006,6 @@ setup(void)
 	 * horizontal list; ih: one item of a vertical list */
 	bh += (int)promptpad;
 	ih = lines > 0 ? bh - (int)promptpad + (int)itempad : bh;
-	mh = bh + (int)lines * ih;
 #ifdef XINERAMA
 	i = 0;
 	if (parentwin == root && (info = XineramaQueryScreens(dpy, &n))) {
@@ -983,12 +1039,10 @@ setup(void)
 		if (i >= n)
 			i = 0;
 
-		x = info[i].x_org + MIN(xoff, MAX(info[i].width - 1, 0));
-		y = info[i].y_org + (topbar ? yoff : info[i].height - mh - 2 * (int)bw - yoff);
-		mw = info[i].width - (x - info[i].x_org);
-		if (menuw > 0)
-			mw = MIN(mw, (int)menuw);
-		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
+		x_org = info[i].x_org;
+		y_org = info[i].y_org;
+		availw = info[i].width;
+		availh = info[i].height;
 		XFree(info);
 	} else
 #endif
@@ -996,14 +1050,23 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		x = MIN(xoff, MAX(wa.width - 1, 0));
-		y = topbar ? yoff : wa.height - mh - 2 * (int)bw - yoff;
-		mw = wa.width - x;
-		if (menuw > 0)
-			mw = MIN(mw, (int)menuw);
-		mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
+		availw = wa.width;
+		availh = wa.height;
+	}
+	fit_menu(availh);
+	x = x_org + MIN(xoff, MAX(availw - 1, 0));
+	mw = availw - (x - x_org);
+	if (menuw > 0)
+		mw = MIN(mw, (int)menuw);
+	mw = MAX(mw - 2 * (int)bw, 1); /* the border is part of the width */
+	/* keep the whole menu on screen even with a large offset or -b */
+	{
+		int slack = MAX(availh - mh - 2 * (int)bw, 0);
+
+		y = y_org + (topbar ? MIN(yoff, slack) : slack - MIN(yoff, slack));
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
+	promptw = MIN(MAX(promptw, 0), mw);
 	inputw = mw / 3; /* input width: ~33% of monitor width */
 	match();
 
@@ -1111,7 +1174,7 @@ main(int argc, char *argv[])
 		} else if (!strcmp(argv[i], "-pp")) { /* extra height of the prompt row in pixels */
 			promptpad = parsepad(argv[++i], "-pp");
 		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
-			bw = parsenum(argv[++i], "-bw");
+			bw = MIN(parsenum(argv[++i], "-bw"), MAX_BORDER);
 		else if (!strcmp(argv[i], "-bc"))  /* border color */
 			linecolors[1] = argv[++i];
 		else if (!strcmp(argv[i], "-lc"))  /* color of the lines between items */

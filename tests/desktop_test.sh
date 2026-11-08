@@ -35,6 +35,8 @@ mk sys1 nodisp NoDisp 'Exec=x' 'NoDisplay=true'
 mk sys1 hid Hid 'Exec=x' 'Hidden=1'
 mk sys1 gnome GnomeOnly 'Exec=g' 'OnlyShowIn=GNOME;'
 mk sys1 kde KdeOnly 'Exec=k' 'OnlyShowIn=KDE;'
+mk sys1 both BothDesktops 'Exec=b' 'OnlyShowIn=GNOME;KDE;'
+mk sys1 escsep EscapedSemicolon 'Exec=es' 'OnlyShowIn=GNOME\;KDE;'
 mk sys1 notkde NotKde 'Exec=n' 'NotShowIn=KDE;'
 mk sys1 trymiss TryMiss 'Exec=x' 'TryExec=definitely-not-installed'
 mk sys1 tryok TryOk 'Exec=x' 'TryExec=sh'
@@ -58,13 +60,14 @@ check "%c stays one argument" "[run][Bob's App]" "$(argv "$out" "Bob's App")"
 check "display line of %c is shell-safe" "run 'Bob'\\''s App'" "$(exec_line "$out" "Bob's App")"
 check "Terminal=true wrapped (xterm)" "[xterm][-e][htop]" "$(argv "$out" Term)"
 listed "OnlyShowIn matches a component of ubuntu:GNOME" GnomeOnly "$out"
+listed "OnlyShowIn list matches any item" BothDesktops "$out"
 listed "NotShowIn=KDE shown on GNOME" NotKde "$out"
 listed "TryExec found" TryOk "$out"
 listed "user dir overrides system" OverUser "$out"
 check "CRLF files parse" "[crlf]" "$(argv "$out" Crlf)"
 check "[Desktop Action] ignored" "[main]" "$(argv "$out" Actions)"
 listed "newline in Name neutralised" "Two Lines" "$out"
-for bad in KdeOnly NoDisp Hid TryMiss MaskUser MaskSys NoExec EmptyExec Lnk OverSys; do
+for bad in KdeOnly EscapedSemicolon NoDisp Hid TryMiss MaskUser MaskSys NoExec EmptyExec Lnk OverSys; do
 	hidden "$bad" "$out"
 done
 check "sorted case-insensitively" "alpha

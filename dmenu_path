@@ -8,11 +8,24 @@ set -f
 cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
 cache="$cachedir/dmenu_run"
 
-[ ! -e "$cachedir" ] && mkdir -p "$cachedir"
+mkdir -p "$cachedir" 2>/dev/null
 
 IFS=:
 if stest -dqr -n "$cache" $PATH; then
-	stest -flx $PATH | sort -u | tee "$cache"
+	# Write to a temporary file first: an interrupted update must not leave
+	# a truncated cache that looks newer than the PATH directories.
+	tmp="$cache.$$"
+	trap 'rm -f "$tmp"' 0 1 2 15
+	if stest -flx $PATH | sort -u > "$tmp"; then
+		mv -f "$tmp" "$cache" 2>/dev/null && tmp=
+	fi
+	if [ -n "$tmp" ]; then
+		cat "$tmp" 2>/dev/null || cat "$cache"
+		rm -f "$tmp"
+	else
+		cat "$cache"
+	fi
+	trap - 0 1 2 15
 else
 	cat "$cache"
 fi

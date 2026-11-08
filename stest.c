@@ -123,9 +123,15 @@ main(int argc, char *argv[])
 	} else {
 		for (; argc; argc--, argv++) {
 			if (FLAG('l') && (dir = opendir(*argv))) {
-				/* test directory contents */
-				errno = 0;
-				while ((d = readdir(dir))) {
+				/* test directory contents. errno must be cleared
+				 * before every readdir() call: the tests below may
+				 * fail (e.g. for a broken symlink) and leave errno
+				 * set even though readdir() itself succeeded. */
+				for (;;) {
+					errno = 0;
+					d = readdir(dir);
+					if (!d)
+						break;
 					r = snprintf(path, sizeof path, "%s/%s",
 					             *argv, d->d_name);
 					if (r >= 0 && (size_t)r < sizeof path)
