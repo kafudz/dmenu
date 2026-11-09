@@ -1173,9 +1173,12 @@ main(int argc, char *argv[])
 			itempad = parsepad(argv[++i], "-ip");
 		} else if (!strcmp(argv[i], "-pp")) { /* extra height of the prompt row in pixels */
 			promptpad = parsepad(argv[++i], "-pp");
-		} else if (!strcmp(argv[i], "-bw"))  /* border width in pixels */
-			bw = MIN(parsenum(argv[++i], "-bw"), MAX_BORDER);
-		else if (!strcmp(argv[i], "-bc"))  /* border color */
+		} else if (!strcmp(argv[i], "-bw")) { /* border width in pixels */
+			/* parse once: MIN() would evaluate the ++i expression twice */
+			bw = parsenum(argv[++i], "-bw");
+			if (bw > MAX_BORDER)
+				bw = MAX_BORDER;
+		} else if (!strcmp(argv[i], "-bc"))  /* border color */
 			linecolors[1] = argv[++i];
 		else if (!strcmp(argv[i], "-lc"))  /* color of the lines between items */
 			linecolors[0] = argv[++i];
