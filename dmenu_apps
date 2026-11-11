@@ -1,2 +1,2 @@
 #!/bin/sh
-exec dmenu -A -i -fn 'VictorMono Nerd Font' "$@"
+exec dmenu -A -i "$@"
