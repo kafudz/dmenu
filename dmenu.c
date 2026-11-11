@@ -1054,6 +1054,10 @@ setup(void)
 		availh = wa.height;
 	}
 	fit_menu(availh);
+	/* fit_menu() may have turned a vertical list into a horizontal one; in
+	 * that case the items use the height of the input row again. */
+	if (lines == 0)
+		ih = bh;
 	x = x_org + MIN(xoff, MAX(availw - 1, 0));
 	mw = availw - (x - x_org);
 	if (menuw > 0)

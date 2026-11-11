@@ -4,28 +4,73 @@
 umask 077
 # PATH entries are directory names, not glob patterns.
 set -f
+# Split $PATH on ':' only; a directory name may contain spaces.
+IFS=:
 
 cachedir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
 cache="$cachedir/dmenu_run"
 
-mkdir -p "$cachedir" 2>/dev/null
+# Print "uid mode" for path, using GNU stat first and BSD stat second.
+stat_info() {
+	stat -c '%u %a' "$1" 2>/dev/null || stat -f '%u %Lp' "$1" 2>/dev/null
+}
 
-IFS=:
-if stest -dqr -n "$cache" $PATH; then
-	# Write to a temporary file first: an interrupted update must not leave
-	# a truncated cache that looks newer than the PATH directories.
-	tmp="$cache.$$"
-	trap 'rm -f "$tmp"' 0 1 2 15
-	if stest -flx $PATH | sort -u > "$tmp"; then
-		mv -f "$tmp" "$cache" 2>/dev/null && tmp=
-	fi
-	if [ -n "$tmp" ]; then
-		cat "$tmp" 2>/dev/null || cat "$cache"
-		rm -f "$tmp"
-	else
+# Is path owned by us and not writable by group or others? A cache directory
+# or file that other users can replace must not be trusted: dmenu_run feeds
+# its contents to a shell.
+private_path() {
+	info=$(stat_info "$1") || return 1
+	owner=${info%% *}
+	mode=${info#* }
+	[ "$owner" = "$(id -u)" ] && [ $((0$mode & 022)) -eq 0 ]
+}
+
+if [ ! -e "$cachedir" ]; then
+	mkdir -p "$cachedir" 2>/dev/null
+fi
+
+if [ -d "$cachedir" ] && private_path "$cachedir"; then
+	cache_ok=1
+else
+	# Do not read or write a cache in a directory we do not control.
+	cache_ok=0
+fi
+
+if [ "$cache_ok" -eq 1 ] && [ -f "$cache" ] && [ ! -L "$cache" ] &&
+   private_path "$cache"; then
+	cache_usable=1
+else
+	cache_usable=0
+fi
+
+if [ "$cache_ok" -ne 1 ]; then
+	# No trustworthy place for a cache: list the path every time.
+	stest -flx $PATH | sort -u
+	exit
+fi
+
+if [ "$cache_usable" -eq 1 ] && ! stest -dqr -n "$cache" $PATH; then
+	cat "$cache"
+	exit
+fi
+
+# Write to a temporary file first: an interrupted update must not leave a
+# truncated cache that looks newer than the PATH directories. noclobber makes
+# the redirection refuse an existing (possibly symlinked) temporary file.
+tmp="$cache.$$"
+rm -f "$tmp"
+trap 'rm -f "$tmp"' 0
+trap 'rm -f "$tmp"; exit 1' 1 2 15
+if (set -C; stest -flx $PATH | sort -u > "$tmp"); then
+	mv -f "$tmp" "$cache" 2>/dev/null && tmp=
+fi
+if [ -n "$tmp" ]; then
+	# Do not publish a partial list; keep the previous cache instead.
+	rm -f "$tmp"
+	if [ "$cache_usable" -eq 1 ]; then
 		cat "$cache"
 	fi
-	trap - 0 1 2 15
 else
 	cat "$cache"
 fi
+trap - 0 1 2 15

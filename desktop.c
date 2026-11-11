@@ -221,24 +221,47 @@ static int
 parse_desktop_file(const char *path, struct entry *e)
 {
 	FILE *f = open_regular(path);
-	char *line = NULL;
-	size_t linesiz = 0, total = 0;
-	ssize_t n;
+	struct stat st;
+	char *buf, *p, *end;
+	size_t cap, nread;
 	int in_section = 0, type_ok = 0, err;
 
 	if (!f)
 		return -1;
 
-	while ((n = getline(&line, &linesiz, f)) != -1) {
-		char *s, *eq;
+	/*
+	 * Read the file into one buffer whose size is based on the size reported
+	 * by fstat(). getline() would first grow a line without limit and only
+	 * then let us reject it as too large. If the file grows after fstat(),
+	 * fread() fills the buffer and the size test below rejects the file.
+	 */
+	if (fstat(fileno(f), &st) || st.st_size < 0 ||
+	    (uintmax_t)st.st_size > MAX_DESKTOP_SIZE) {
+		fclose(f);
+		return -1;
+	}
+	cap = (size_t)st.st_size + 1;
+	buf = ecalloc(cap, 1);
+	nread = fread(buf, 1, cap, f);
+	err = ferror(f);
+	fclose(f);
+	if (err || nread == cap) {
+		free(buf);
+		return -1;
+	}
+	buf[nread] = '\0';
 
-		/* the file may have grown since fstat(): enforce the cap again */
-		if ((size_t)n > MAX_DESKTOP_SIZE - total) {
-			type_ok = 0;
-			break;
+	for (p = buf, end = buf + nread; p < end; ) {
+		char *s, *eq, *nl = memchr(p, '\n', (size_t)(end - p));
+
+		s = p;
+		if (nl) {
+			*nl = '\0';
+			p = nl + 1;
+		} else {
+			p = end;
 		}
-		total += (size_t)n;
-		s = trim(line);
+		s = trim(s);
 
 		if (!*s || *s == '#')
 			continue;
@@ -259,11 +282,9 @@ parse_desktop_file(const char *path, struct entry *e)
 		else
 			set_field(e, s, eq);
 	}
-	free(line);
-	err = ferror(f);
-	fclose(f);
+	free(buf);
 
-	if (err || !type_ok || !e->exec || !*e->exec || !e->name || !*e->name)
+	if (!type_ok || !e->exec || !*e->exec || !e->name || !*e->name)
 		return -1;
 	return 0;
 }

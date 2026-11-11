@@ -25,10 +25,12 @@ stest: stest.o
 tests/desktop_dump: tests/desktop_dump.c desktop.c util.c desktop.h util.h config.mk
 	$(CC) $(CFLAGS) -o $@ tests/desktop_dump.c desktop.c util.c
 
-# parser tests; need no X server and no X libraries
-test: tests/desktop_dump stest
+# parser, option and cache tests; need no X server
+test: tests/desktop_dump stest dmenu
 	sh tests/desktop_test.sh tests/desktop_dump
 	sh tests/stest_test.sh ./stest
+	sh tests/dmenu_options_test.sh ./dmenu
+	sh tests/dmenu_path_test.sh ./dmenu_path ./stest
 
 clean:
 	rm -f dmenu stest tests/desktop_dump $(OBJ) dmenu-$(VERSION).tar.gz
